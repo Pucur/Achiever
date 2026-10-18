@@ -1,10 +1,11 @@
 local _G, _ = _G or getfenv()
 
 ACHIEVER_ADDON_NAME = 'Achiever'
-local ACHIEVER_ADDON_VERSION = '0.0.2.0'
+local ACHIEVER_ADDON_VERSION = '0.0.3.0'
 local ACHIEVER_ADDON_CHANNEL = 'ACHIEVER_CHANNEL'
 local ACHIEVER_REQUESTED_DATA = false
 local ACHIEVER_STARTED = false
+local ACHIEVER_INIT = false
 
 local function debug(msg)
     if achieverDBpc.debug == "enabled" then
@@ -56,32 +57,12 @@ Achiever:RegisterEvent("ADDON_LOADED")
 Achiever:RegisterEvent("CHAT_MSG_CHANNEL_NOTICE")
 Achiever:RegisterEvent("PLAYER_ENTERING_WORLD")
 Achiever:RegisterEvent("VARIABLES_LOADED")
-
+Achiever:RegisterEvent("CHAT_MSG_ADDON")
+Achiever:RegisterEvent("CHAT_MSG_WHISPER")
 
 Achiever.version = ACHIEVER_ADDON_VERSION
 Achiever.channel = ACHIEVER_ADDON_CHANNEL
 Achiever.channelIndex = nil
-
-Achiever.hookChatFrame = function(self, frame)
-    if (not frame) then
-        warn('Achiever failed to hook chat frame')
-        return
-    end
-
-    local original = frame.AddMessage
-    if (original) then
-        frame.AddMessage = function(t, message, ...)
-            local s, e  = string.find(message, 'ACHI#', 1, true)
-            if (s == 1 and e == 5) then
-                self:processServerMessage(message)
-                return false --hide this message
-            end
-            original(t, message, unpack(arg))
-        end
-    else
-        warn('failed to hook non-chat frame.')
-    end
-end
 
 Achiever.achievementFrameSummaryCategorySubscribers = {}
 
@@ -113,7 +94,12 @@ Achiever.processServerMessage = function(self, message)
             achieverDB.achievements.data[id].titleReward = titleReward
             achieverDB.achievements.data[id].count = tonumber(a[12])
             achieverDB.achievements.data[id].refAchievement = tonumber(a[13])
-            achieverDB.achievements.totalPoints = achieverDB.achievements.totalPoints + tonumber(a[7])
+            
+            -- ** ITT LETTE BESZÚRVA A BIZTONSÁGI ELLENŐRZÉS (Elkerüli a nil aritmetikai hibát a 97. sorban) **
+            if not achieverDB.achievements.totalPoints then
+                achieverDB.achievements.totalPoints = 0
+            end
+            achieverDB.achievements.totalPoints = achieverDB.achievements.totalPoints + (tonumber(a[7]) or 0)
 
             local n = tonumber(a[14])
             local c = tonumber(a[15])
@@ -143,7 +129,6 @@ Achiever.processServerMessage = function(self, message)
             achieverDB.achievements.version = tonumber(params[3])
             ACHIEVER_STARTED = true
         elseif (params[2] == 'CA') then
-            --debug('server response: get all categories')
             local a = split(params[3], ";")
             local id = tonumber(a[1])
             achieverDB.categories.data[id] = {}
@@ -211,12 +196,13 @@ Achiever.processServerMessage = function(self, message)
             debug('server response: criteria data version')
             achieverDB.criteria.version = tonumber(params[3])
             ACHIEVER_STARTED = true
-        elseif (params[2] == 'CH_AC') then
-            --debug('server response: char achievements')
-            local a = split(params[3], ";")
-            local id = tonumber(a[1])
-            achieverDBpc.achievements[id] = {}
-            achieverDBpc.achievements[id].date = tonumber(a[2])
+            elseif (params[2] == 'CH_AC') then
+                local a = split(params[3], ";")
+                local id = tonumber(a[1])
+
+                achieverDBpc.achievements[id] = {}
+                achieverDBpc.achievements[id].date = tonumber(a[2])
+
             ACHIEVER_STARTED = true
         elseif (params[2] == 'CH_CR') then
             --debug('server response: char criteria')
@@ -284,16 +270,22 @@ Achiever.apiRequestCriteriaInfo = function(self, version)
     --SendChatMessage('!achievements getCriteria ' .. version, 'CHANNEL', nil, Achiever.channelIndex)
 end
 Achiever.apiRequestCharacterCriteria = function(self)
-    debug('requested character criteria progress from server')
+debug('requested character criteria progress from server')
+
+if (not achieverDBpc.criteria) then
     achieverDBpc.criteria = {}
+    end
+
     SendChatMessage('.achievements getCharacterCriteria')
-    --SendChatMessage('!achievements getCharacterCriteria', 'CHANNEL', nil, Achiever.channelIndex)
 end
 Achiever.apiRequestCharacterAchievements = function(self)
-    debug('requested character achievements from server')
+debug('requested character achievements from server')
+
+if (not achieverDBpc.achievements) then
     achieverDBpc.achievements = {}
+    end
+
     SendChatMessage('.achievements getCharacterAchievements')
-    --SendChatMessage('.achievements getCharacterAchievements', 'CHANNEL', nil, Achiever.channelIndex)
 end
 
 Achiever.getChannelIndex = function(self, channelName)
@@ -325,8 +317,8 @@ Achiever.startup = function(self)
     end
 
     local factionGroup, localedFaction = UnitFactionGroup("player");
+    if (not achieverDBpc) then achieverDBpc = {} end
 
-    if (not achieverDBpc.debug) then achieverDBpc.debug = "disabled" end
     if (not achieverDBpc.buttonsmall) then achieverDBpc.buttonsmall = "disabled"; Achiever_Minimap:Hide(); end
     if (not achieverDBpc.buttonmain) then achieverDBpc.buttonmain = "enabled" end
     if (not achieverDBpc.version) then achieverDBpc.version = 0 end
@@ -335,7 +327,7 @@ Achiever.startup = function(self)
         if (not achieverDB.Alliance) then
             achieverDB.Alliance = true
             achieverDB.Horde = false
-            achieverDB = nil
+            --achieverDB = nil
         end
         --if (ACHIEVER_STARTED == false) then achieverDB = achieverDB.Alliance end
     end
@@ -343,7 +335,7 @@ Achiever.startup = function(self)
         if (not achieverDB.Horde) then
             achieverDB.Horde = true
             achieverDB.Alliance = false
-            achieverDB = nil
+            --achieverDB = nil
         end
         --if (ACHIEVER_STARTED == false) then achieverDB = achieverDB.Horde end
     end
@@ -368,36 +360,43 @@ Achiever.startup = function(self)
         achieverDB.criteria.data = {}
         achieverDB.criteria.byAchievement = {}
     end
-    if (not achieverDBpc) then achieverDBpc = {} end
-    --self:apiRequestCategoryInfo(achieverDB.categories.version)
-    --self:apiRequestAchievementInfo(achieverDB.achievements.version)
-    --self:apiRequestCriteriaInfo(achieverDB.criteria.version)
-    --self:apiRequestCharacterCriteria()
-    --self:apiRequestCharacterAchievements()
-    debug('request data to UI ' .. achieverDBpc.version)
-    self:apiEnableDataSend(achieverDBpc.version)
+    if (not achieverDBpc.debug) then achieverDBpc.debug = "disabled" end
+        debug('request data to UI ' .. achieverDBpc.version)
+
+        ACHIEVER_INIT = true
+
+        self:apiRequestCategoryInfo(achieverDB.categories.version)
+        self:apiRequestAchievementInfo(achieverDB.achievements.version)
+        self:apiRequestCriteriaInfo(achieverDB.criteria.version)
+        self:apiRequestCharacterCriteria()
+        self:apiRequestCharacterAchievements()
+
+        self:apiEnableDataSend(achieverDBpc.version)
     -- ACHIEVER_STARTED = true
 end
 
-
-
-Achiever:SetScript("OnEvent", function()
+Achiever:SetScript("OnEvent", function(self, event, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10)
     if (not event) then
         warn('OnEvent with no event')
 		return
 	elseif (event == "ADDON_LOADED" and arg1 == ACHIEVER_ADDON_NAME) then
         debug('ADDON_LOADED')
-        Achiever:hookChatFrame(ChatFrame1)
-        Achiever:startup()
 	elseif (event == 'CHAT_MSG_CHANNEL_LEAVE') then
         debug('OnEvent CHAT_MSG_CHANNEL_LEAVE')
-	elseif (event == 'CHAT_MSG_ADDON') then
-        debug('OnEvent CHAT_MSG_ADDON')
     elseif (event == 'VARIABLES_LOADED') then
         debug('VARIABLES_LOADED')
 	elseif (event == 'PLAYER_ENTERING_WORLD') then
-        Achiever:hookChatFrame(ChatFrame1)
+		debug('PLAYER_ENTERING_WORLD')
+        loginTime = GetTime()
         Achiever:startup()
+	elseif (event == 'CHAT_MSG_ADDON' or event == 'CHAT_MSG_WHISPER') then
+		if (ACHIEVER_INIT and arg1) then
+			local s, e  = string.find(arg1, 'ACHI#', 1, true)
+			if (s == 1 and e == 5) then
+				debug('hidden achievement server message: ' .. arg1)
+				self:processServerMessage(arg1)
+			end
+		end
 	end
 end)
 
