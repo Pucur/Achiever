@@ -1,6 +1,6 @@
 # Achiever
 ## An Achievement addon for modded cmangos server
-[My modded cmangos branch is here: https://github.com/celguar/mangos-classic/tree/ike3-bots](https://github.com/celguar/mangos-classic/tree/ike3-bots)
+[Updated version by Dark Storm Reloaded Team](https://dsreloaded.com/) v.0.3.4
 
 [![Achiever addon](https://i.postimg.cc/Kz1WLNMy/Achiever-Summary.jpg)](https://i.postimg.cc/Kz1WLNMy/Achiever-Summary.jpg)
 
