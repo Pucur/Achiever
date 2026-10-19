@@ -1,25 +1,20 @@
--- Achiever (WoW 2.4.3 / TBC kliens, Lua 5.1)
+
 local _G = _G
 
 ACHIEVER_ADDON_NAME = 'Achiever'
 local ACHIEVER_ADDON_VERSION = '0.0.3.1'
 local ACHIEVER_ADDON_CHANNEL = 'ACHIEVER_CHANNEL'
 
--- Beállítások ------------------------------------------------------------
-local STARTUP_DELAY   = 6.0    -- ennyi mp-et vár a világba lépés után, mielőtt bármit küld a szervernek
-local REQUEST_SPACING = 1.0    -- két szerverparancs között eltelő idő (flood / disconnect ellen)
-local ALWAYS_RELOAD   = true   -- true: minden bejelentkezéskor újratölti az adatbázist (mint eddig)
+local STARTUP_DELAY   = 6.0
+local REQUEST_SPACING = 1.0 
+local ALWAYS_RELOAD   = true
 
--- Állapot ----------------------------------------------------------------
-local ACHIEVER_STARTED = false  -- jött-e már válasz a szervertől
-local ACHIEVER_INIT    = false  -- lefutott-e az indítás (bejelentkezésenként csak egyszer fut)
+local ACHIEVER_STARTED = false
+local ACHIEVER_INIT    = false
 
 local PAT_HASH = '[^#]+'
 local PAT_SEMI = '[^;]+'
 
----------------------------------------------------------------------------
--- Segédfüggvények
----------------------------------------------------------------------------
 local function debug(msg)
     if achieverDBpc and achieverDBpc.debug == "enabled" then
         DEFAULT_CHAT_FRAME:AddMessage('|cffc663fcDEBUG: |cffff55ff' .. tostring(msg))
@@ -53,7 +48,6 @@ local function newDB()
     }
 end
 
--- Nem destruktív: csak a hiányzó táblákat pótolja, így a UI soha nem kap nil-t.
 local function ensureDB()
     if type(achieverDBpc) ~= 'table' then achieverDBpc = {} end
     if type(achieverDBpc.criteria) ~= 'table' then achieverDBpc.criteria = {} end
@@ -82,13 +76,8 @@ local function ensureDB()
     if type(achieverDB.criteria.byAchievement) ~= 'table' then achieverDB.criteria.byAchievement = {} end
 end
 
--- Már a fájl betöltésekor legyen használható (nil-védelem az XML/UI scripteknek).
--- A SavedVariables később úgyis felülírja / kiegészíti.
 ensureDB()
 
----------------------------------------------------------------------------
--- Slash parancsok
----------------------------------------------------------------------------
 local function toggleDebug()
     ensureDB()
     if achieverDBpc.debug == "enabled" then
@@ -108,9 +97,6 @@ end
 SLASH_RELOADUI1 = "/rl"
 SlashCmdList["RELOADUI"] = ReloadUI
 
----------------------------------------------------------------------------
--- Fő frame
----------------------------------------------------------------------------
 Achiever = CreateFrame("Frame")
 
 Achiever:RegisterEvent("ADDON_LOADED")
@@ -126,9 +112,6 @@ Achiever.channelIndex = nil
 
 Achiever.achievementFrameSummaryCategorySubscribers = {}
 
----------------------------------------------------------------------------
--- Szerver üzenetek feldolgozása
----------------------------------------------------------------------------
 local function handleServerMessage(self, message)
     local params = split(message, PAT_HASH)
     if params[1] ~= 'ACHI' then return end
@@ -145,7 +128,6 @@ local function handleServerMessage(self, message)
 
     if cmd == 'AC' then
         local data = achieverDB.achievements.data
-        -- ha ugyanaz az achievement újra megérkezik, ne számoljuk duplán a pontot
         local old = data[id]
         if old and old.points then
             achieverDB.achievements.totalPoints = achieverDB.achievements.totalPoints - old.points
@@ -287,7 +269,6 @@ local function handleServerMessage(self, message)
     end
 end
 
--- pcall: egy hibás / váratlan szerverüzenet sem okozhat Lua errort
 Achiever.processServerMessage = function(self, message)
     if type(message) ~= 'string' then return end
     local ok, err = pcall(handleServerMessage, self, message)
@@ -296,9 +277,6 @@ Achiever.processServerMessage = function(self, message)
     end
 end
 
----------------------------------------------------------------------------
--- Szerver API (parancsok)
----------------------------------------------------------------------------
 Achiever.apiEnableDataSend = function(self, version)
     debug('request to enable sending achievement info, ' .. tostring(version or 0))
     SendChatMessage('.achievements enableAchiever ' .. (version or 0))
@@ -344,9 +322,6 @@ Achiever.joinChannel = function(self)
     end
 end
 
----------------------------------------------------------------------------
--- Indítás: késleltetve, egyszer, a kérések lassan egymás után mennek ki
----------------------------------------------------------------------------
 local pending = {}
 local pendingFirst, pendingLast = 1, 0
 local waitTimer = 0
@@ -422,8 +397,6 @@ local function onUpdate(frame, elapsed)
     end
 end
 
--- 2.4.3-ban a handlerek paramétereket és (régi módon) globálisokat is kaphatnak:
--- mindkettőt kezeljük, így biztosan nem lesz "OnEvent with no event".
 Achiever:SetScript("OnEvent", function(frame, ev, a1, a2)
     local e = ev or _G.event
     local m1 = a1 or _G.arg1
@@ -440,7 +413,6 @@ Achiever:SetScript("OnEvent", function(frame, ev, a1, a2)
         end
 
     elseif e == "PLAYER_ENTERING_WORLD" then
-        -- Zónaváltásnál / töltőképernyőnél is lefut: csak az első alkalommal indítunk.
         if not worldEntered then
             worldEntered = true
             startupTimer = 0
@@ -450,7 +422,6 @@ Achiever:SetScript("OnEvent", function(frame, ev, a1, a2)
     elseif e == "CHAT_MSG_ADDON" or e == "CHAT_MSG_WHISPER" then
         if ACHIEVER_INIT then
             local msg
-            -- CHAT_MSG_WHISPER: arg1 = üzenet; CHAT_MSG_ADDON: arg1 = prefix, arg2 = üzenet
             if type(m1) == 'string' and string.find(m1, 'ACHI#', 1, true) == 1 then
                 msg = m1
             elseif type(m2) == 'string' and string.find(m2, 'ACHI#', 1, true) == 1 then
@@ -463,9 +434,6 @@ Achiever:SetScript("OnEvent", function(frame, ev, a1, a2)
     end
 end)
 
----------------------------------------------------------------------------
--- Micro button / UI
----------------------------------------------------------------------------
 NEWBIE_TOOLTIP_ACHIEVEMENT = "View information about your achievements and statistics.";
 TOGGLEACHIEVEMENTS = 'Open Achievements';
 BINDING_HEADER_ACHIEVER = "Achiever";
@@ -506,18 +474,16 @@ end
 function UpdateAchievementsButton()
     if not AchievementsMicroButton then return end
 
-    -- move nearby buttons
     if ( UnitLevel("player") < 10 ) then
         AchievementsMicroButton:SetPoint("BOTTOMLEFT", "TalentMicroButton", "BOTTOMLEFT", 0, 0);
         if QuestLogMicroButton then QuestLogMicroButton:SetPoint("BOTTOMLEFT", "AchievementsMicroButton", "BOTTOMRIGHT", -2, 0); end
     else
         AchievementsMicroButton:SetPoint("BOTTOMLEFT", "TalentMicroButton", "BOTTOMRIGHT", -2, 0);
     end
-    -- hide help button to free up space
+    
     if HelpMicroButton then HelpMicroButton:Hide(); end
     if QuestLogMicroButton then QuestLogMicroButton:SetPoint("BOTTOMLEFT", "AchievementsMicroButton", "BOTTOMRIGHT", -3, 0); end
 
-    -- Update main bar button
     if AchievementFrame and AchievementFrame:IsShown() then
         AchievementsMicroButton:SetButtonState("PUSHED", 1);
         if SetButtonPulse then SetButtonPulse(AchievementsMicroButton, 0, 1); end
