@@ -1,6 +1,5 @@
 # Achiever
 ## An Achievement addon for modded cmangos server
-[Updated version by Dark Storm Reloaded Team](https://dsreloaded.com/) v.0.3.4
 
 [![Achiever addon](https://i.postimg.cc/Kz1WLNMy/Achiever-Summary.jpg)](https://i.postimg.cc/Kz1WLNMy/Achiever-Summary.jpg)
 
