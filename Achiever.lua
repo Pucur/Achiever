@@ -512,11 +512,6 @@ Achiever.apiRequestCharacterCriteria = function(self)
     if type(achieverDBpc.criteria) ~= 'table' then achieverDBpc.criteria = {} end
     sendServerCommand('.achievements getCharacterCriteria')
 end
-Achiever.apiRequestCharacterAchievements = function(self)
-    debug('requested character achievements from server')
-    if type(achieverDBpc.achievements) ~= 'table' then achieverDBpc.achievements = {} end
-    sendServerCommand('.achievements getCharacterAchievements')
-end
 
 Achiever.getChannelIndex = function(self, channelName)
     local lastVal = 0
@@ -635,8 +630,6 @@ Achiever.startup = function(self)
         {CR = true, CRV = true}, 'criteria', achieverDB.criteria.version >= 0)
     queueRequest(function() me:apiRequestCharacterCriteria() end,
         {CH_CR = true}, 'character criteria', true)
-    queueRequest(function() me:apiRequestCharacterAchievements() end,
-        {CH_AC = true}, 'character achievements', true)
     -- Enabling with the old per-character 0 would request ALL static data a
     -- second time on servers whose enable handler also sends initial snapshots.
     queueRequest(function()
