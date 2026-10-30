@@ -1,4 +1,4 @@
-# Achiever 0.3.4: installation and changes
+# Achiever 0.3.5: installation and changes
 
 This is an updated version of the uploaded Achiever addon for WoW 2.4.3, Interface 20400. Version 0.3.3 was reported working in the user's client; 0.3.4 keeps its synchronization and compatibility fixes while making normal loading silent and the added in-game messages English.
 
@@ -22,6 +22,18 @@ Debug mode is opt-in and its existing setting is preserved. If previously enable
 4. Keep your SavedVariables files. Do not run `/acreset` just to install this update.
 5. Log in and let synchronization finish. Normal loading intentionally produces no chat output.
 6. If needed, run `/acstatus` manually. Confirm version `0.3.4`, state `ready`, and ideally `errors=0`.
+
+## Changes in 0.3.5
+
+- Startup pacing shortened: request spacing 3.0s -> 2.0s, quiet window 3.0s -> 2.0s, no-reply quiet window 8.0s -> 4.0s. Requests are still strictly serial and the 6s startup delay is kept, because the serial pacing prevents the world server from being overloaded at login.
+- If the first request gets no server reply for 20 seconds, a single chat message is printed explaining the most likely cause (the account lacks GM permission for the `.achievements` commands). The existing 45s timeout is unchanged.
+- Timeout errors now distinguish "no server reply at all" from a timeout after partial data.
+
+## Non-GM accounts (server-side requirement)
+
+The addon does not use any server-side API beyond the `.achievements` chat commands: `enableAchiever`, `getCategories`, `getAchievements`, `getCriteria`, `getCharacterCriteria`. On CMaNGOS these are restricted by the security level stored in the `command` table of the world database. If that level is above the player's, the server silently ignores the command for a normal account, and the addon waits until it times out. This cannot be fixed on the addon side.
+
+To support normal accounts, the server administrator should lower the required level of these subcommands to player level, and make sure the server handler returns only the requesting character's own progress (the static category/achievement/criteria data is public). The server-side source is not included in this ZIP, so verify the exact command names and table on your server first.
 
 ## Commands
 

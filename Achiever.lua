@@ -231,13 +231,15 @@ Achiever.processServerMessage = function(self, message)
             if (not achieverDBpc.achievements) then achieverDBpc.achievements = {} end
             achieverDBpc.achievements[id] = {}
             achieverDBpc.achievements[id].date = tonumber(a[2])
+            -- A riasztást külön védjük: ha a UI-frissítés hibázna, az achievement ne vesszen el.
+            safeUi(function() AlertFrame_ShowAchievementEarned(id) end)
             safeUi(function()
+                Achiever_RefreshUi()
                 AchievementFrameAchievements_OnEvent(_G['AchievementFrameAchievements'], 'ACHIEVEMENT_EARNED', id)
                 for k, v in pairs(self.achievementFrameSummaryCategorySubscribers) do
                     AchievementFrameSummaryCategory_OnEvent(v, 'ACHIEVEMENT_EARNED', id)
                 end
                 AchievementFrameSummary_Update()
-                AlertFrame_ShowAchievementEarned(id)
             end)
             local ad = achieverDB.achievements.data[id]
             if ad then debug("ACHIEVEMENT EARNED " .. tostring(ad.name)) end
@@ -252,6 +254,8 @@ Achiever.processServerMessage = function(self, message)
             achieverDBpc.criteria[id].date = tonumber(a[4])
             safeUi(function()
                 AchievementFrameAchievements_OnEvent(_G['AchievementFrameAchievements'], 'CRITERIA_UPDATE', id)
+            end)
+            safeUi(function()
                 AchievementFrameStats_OnEvent(_G['AchievementFrameStats'], 'CRITERIA_UPDATE', id)
             end)
             local ad = achieverDB.achievements.data[tonumber(a[2])]
@@ -372,6 +376,15 @@ local function onTick(self, elapsed)
     end
 end
 
+-- Az achievement-lista (ACHIEVEMENTUI_CATEGORIES) csak tab-kattintásnál épül újra.
+-- Ezt a megnyitás és az achievement-szerzés után is lefuttatjuk, különben régi listát látunk.
+function Achiever_RefreshUi()
+    if not AchievementFrame or not AchievementFrame:IsShown() then return end
+    AchievementFrameCategories_GetCategoryList(ACHIEVEMENTUI_CATEGORIES)
+    AchievementFrameCategories_Update()
+    AchievementFrame_ForceUpdate()
+end
+
 -- Az achievement ablak megnyitását (keybind, micro gomb) addig zárjuk, amíg az adat nincs kész.
 local function installUiGate()
     if uiGateInstalled or type(AchievementFrame_ToggleAchievementFrame) ~= 'function' then return end
@@ -384,7 +397,26 @@ local function installUiGate()
                 .. ' ach=' .. v(achieverDB.achievements) .. ' crit=' .. v(achieverDB.criteria) .. '). Use /acready.')
             return
         end
-        return original(...)
+        original(...)
+        safeUi(Achiever_RefreshUi)
+    end
+end
+
+-- A szerver chat-linkje (|Hachievement:ID|h) a TBC kliensben nem ismert link-típus:
+-- kattintásra az ItemRef hibát dobna. Ezt elkapjuk, és helyette az achievement-ablakot nyitjuk.
+local linkGateInstalled = false
+local function installLinkGate()
+    if linkGateInstalled or type(SetItemRef) ~= 'function' then return end
+    linkGateInstalled = true
+    local original = SetItemRef
+    SetItemRef = function(link, text, button, ...)
+        if type(link) == 'string' and string.find(link, '^achievement:') then
+            if not (AchievementFrame and AchievementFrame:IsShown()) then
+                AchievementFrame_ToggleAchievementFrame()
+            end
+            return
+        end
+        return original(link, text, button, ...)
     end
 end
 
@@ -392,6 +424,7 @@ local function scheduleStartup()
     if ACHIEVER_INIT or startupTimer ~= nil then return end
     startupTimer = 0
     installUiGate()
+    installLinkGate()
     Achiever:SetScript("OnUpdate", onTick)
 end
 
