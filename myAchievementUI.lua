@@ -7,6 +7,11 @@ local function debug(msg)
 		DEFAULT_CHAT_FRAME:AddMessage('|cffc663fcDEBUG: |cffff55ff'.. (msg or 'nil'))
 	end
 end
+local function warn(msg)
+	if achieverDBpc.debug == "enabled" then
+		DEFAULT_CHAT_FRAME:AddMessage('|cf3f3f66cWARN: |cffff55ff'.. (msg or 'nil'))
+	end
+end
 
 SLASH_ACHIEVER1 = "/ac"
 SlashCmdList.ACHIEVER = function()
@@ -188,10 +193,6 @@ end
 -- [[ AchievementFrame ]] --
 
 function AchievementFrame_ToggleAchievementFrame(toggleStatFrame)
-    if Achiever and Achiever.state ~= 'ready' then
-        DEFAULT_CHAT_FRAME:AddMessage('Achiever: data is still loading or synchronization failed. Use /acstatus for details.')
-        return
-    end
 	AchievementFrameComparison:Hide();
 	AchievementFrameTab_OnClick = AchievementFrameBaseTab_OnClick;
 	if ( not toggleStatFrame ) then
@@ -214,10 +215,6 @@ function AchievementFrame_ToggleAchievementFrame(toggleStatFrame)
 end
 
 function AchievementFrame_DisplayComparison (unit)
-	if not Achiever.supportsComparison then
-		DEFAULT_CHAT_FRAME:AddMessage('Achiever: achievement comparison is not supported in this port.');
-		return;
-	end
 	AchievementFrame.wasShown = nil;
 	AchievementFrameTab_OnClick = AchievementFrameComparisonTab_OnClick;
 	AchievementFrameTab_OnClick(1);
@@ -386,9 +383,9 @@ function AchievementFrameCategories_OnEvent()
 				ACHIEVEMENTUI_CATEGORIESWIDTH = 175;
 				AchievementFrameCategories:SetWidth(175);
 				AchievementFrameCategoriesContainer:GetScrollChild():SetWidth(175);
-				AchievementFrameAchievements:SetPoint("TOPLEFT", AchievementFrameCategories, "TOPRIGHT", 22, 0);
-				AchievementFrameStats:SetPoint("TOPLEFT", AchievementFrameCategories, "TOPRIGHT", 22, 0);
-				AchievementFrameComparison:SetPoint("TOPLEFT", AchievementFrameCategories, "TOPRIGHT", 22, 0)
+				AchievementFrameAchievements:SetPoint("TOPLEFT", "$parentCategories", "TOPRIGHT", 22, 0);
+				AchievementFrameStats:SetPoint("TOPLEFT", "$parentCategories", "TOPRIGHT", 22, 0);
+				AchievementFrameComparison:SetPoint("TOPLEFT", "$parentCategories", "TOPRIGHT", 22, 0)
 				AchievementFrameWaterMark:SetWidth(145);
 				AchievementFrameWaterMark:SetTexCoord(0, 145/256, 0, 1);
                 for _, button in next, AchievementFrameCategoriesContainer.buttons do
@@ -406,9 +403,9 @@ function AchievementFrameCategories_OnEvent()
 				ACHIEVEMENTUI_CATEGORIESWIDTH = 197;
 				AchievementFrameCategories:SetWidth(197);
 				AchievementFrameCategoriesContainer:GetScrollChild():SetWidth(197);
-				AchievementFrameAchievements:SetPoint("TOPLEFT", AchievementFrameCategories, "TOPRIGHT", 0, 0);
-				AchievementFrameStats:SetPoint("TOPLEFT", AchievementFrameCategories, "TOPRIGHT", 0, 0);
-				AchievementFrameComparison:SetPoint("TOPLEFT", AchievementFrameCategories, "TOPRIGHT", 0, 0)
+				AchievementFrameAchievements:SetPoint("TOPLEFT", "$parentCategories", "TOPRIGHT", 0, 0);
+				AchievementFrameStats:SetPoint("TOPLEFT", "$parentCategories", "TOPRIGHT", 0, 0);
+				AchievementFrameComparison:SetPoint("TOPLEFT", "$parentCategories", "TOPRIGHT", 0, 0)
 				AchievementFrameWaterMark:SetWidth(167);
 				AchievementFrameWaterMark:SetTexCoord(0, 167/256, 0, 1);
                 for _, button in next, AchievementFrameCategoriesContainer.buttons do
@@ -453,31 +450,29 @@ function AchievementFrameCategories_GetCategoryList ()
 	-- Insert the fake Summary category
 	tinsert(ACHIEVEMENTUI_CATEGORIES, 1, { ["id"] = "summary" });
 
-	local rootParent = (USE_FUNCTIONS == 'STAT_FUNCTIONS' or USE_FUNCTIONS == 'COMPARISON_STAT_FUNCTIONS') and 1 or -1;
-	local roots, children = {}, {};
-	for _, id in ipairs(cats or {}) do
+	for i, id in next, cats do
 		local name, parent, order = GetCategoryInfo(id);
-		local entry = {id = id, order = order or 0};
-		if parent == rootParent then
-			tinsert(roots, entry);
+		local rootParent = -1
+		if (USE_FUNCTIONS == 'ACHIEVEMENT_FUNCTIONS' or USE_FUNCTIONS == 'COMPARISON_ACHIEVEMENT_FUNCTIONS') then
+			rootParent = -1
 		else
-			children[parent] = children[parent] or {};
-			entry.parent, entry.hidden = parent, true;
-			tinsert(children[parent], entry);
+			rootParent = 1
+		end
+		if ( parent == rootParent ) then
+			tinsert(ACHIEVEMENTUI_CATEGORIES, order + 1, { ["id"] = id, ['order'] = order });
 		end
 	end
-	local function ordered(a, b)
-		if a.order ~= b.order then return a.order < b.order end
-		return a.id < b.id
-	end
-	table.sort(roots, ordered);
-	for _, entry in ipairs(roots) do
-		tinsert(ACHIEVEMENTUI_CATEGORIES, entry);
-		local list = children[entry.id];
-		if list then
-			entry.parent, entry.collapsed = true, true;
-			table.sort(list, ordered);
-			for _, child in ipairs(list) do tinsert(ACHIEVEMENTUI_CATEGORIES, child) end
+
+	local name, parent, order;
+	local catsSize = table.getn(cats);
+	for i = catsSize, 1, -1 do
+		name, parent, order = GetCategoryInfo(cats[i]);
+		for j, category in next, ACHIEVEMENTUI_CATEGORIES do
+			if ( category.id == parent ) then
+				category.parent = true;
+				category.collapsed = true;
+				tinsert(ACHIEVEMENTUI_CATEGORIES, j + 1, { ["id"] = cats[i], ["parent"] = category.id, ["hidden"] = true, ['order'] = order });
+			end
 		end
 	end
 end
@@ -913,7 +908,7 @@ function AchievementFrameAchievements_OnLoad (self)
 end
 
 function AchievementFrameAchievements_OnEvent (self, event, ...)
-	debug('AchievementFrameAchievements_OnEvent: '..event)
+	warn('inspect xml AchievementFrameAchievements_OnEvent '..event)
 	if ( event == "ADDON_LOADED" ) then
 		self:RegisterEvent("ACHIEVEMENT_EARNED");
 		self:RegisterEvent("CRITERIA_UPDATE");
@@ -1313,10 +1308,6 @@ function AchievementButton_OnClick (self, ignoreModifiers)
 end
 
 function AchievementButton_ToggleTracking (id)
-	if not WatchFrame_Update or not AddTrackedAchievement or not WATCHFRAME_MAXACHIEVEMENTS then
-		DEFAULT_CHAT_FRAME:AddMessage('Achiever: achievement tracking is not supported in this port.');
-		return false;
-	end
 	if ( trackedAchievements[id] ) then
 		RemoveTrackedAchievement(id);
 		AchievementFrameAchievements_ForceUpdate();
@@ -1486,13 +1477,13 @@ function AchievementButton_DisplayObjectives (button, id, completed)
 		local ACHIEVEMENTMODE_CRITERIA = 1;
 		if ( objectives.mode == ACHIEVEMENTMODE_CRITERIA ) then
 			if ( objectives:GetHeight() > 0 ) then
-				objectives:SetPoint("TOP", button.hiddenDescription, "BOTTOM", 0, -8);
-				objectives:SetPoint("LEFT", button.icon, "RIGHT", -5, 0);
-				objectives:SetPoint("RIGHT", button.shield, "LEFT", -10, 0);
+				objectives:SetPoint("TOP", "$parentHiddenDescription", "BOTTOM", 0, -8);
+				objectives:SetPoint("LEFT", "$parentIcon", "RIGHT", -5, 0);
+				objectives:SetPoint("RIGHT", "$parentShield", "LEFT", -10, 0);
 			end
 			height = ACHIEVEMENTBUTTON_COLLAPSEDHEIGHT + objectives:GetHeight();
 		else
-			objectives:SetPoint("TOP", button.hiddenDescription, "BOTTOM", 0, -8);
+			objectives:SetPoint("TOP", "$parentHiddenDescription", "BOTTOM", 0, -8);
 			height = ACHIEVEMENTBUTTON_COLLAPSEDHEIGHT + objectives:GetHeight();
 		end
 	elseif ( completed and GetPreviousAchievement(id) ) then
@@ -1502,7 +1493,7 @@ function AchievementButton_DisplayObjectives (button, id, completed)
 		AchievementButton_ResetMiniAchievements();
 		AchievementButton_ResetMetas();
 		AchievementObjectives_DisplayProgressiveAchievement(objectives, id);
-		objectives:SetPoint("TOP", button.hiddenDescription, "BOTTOM", 0, -8);
+		objectives:SetPoint("TOP", "$parentHiddenDescription", "BOTTOM", 0, -8);
 		height = ACHIEVEMENTBUTTON_COLLAPSEDHEIGHT + objectives:GetHeight();
 	else
 		objectives:SetHeight(0);
@@ -1512,9 +1503,9 @@ function AchievementButton_DisplayObjectives (button, id, completed)
 		AchievementButton_ResetMetas();
 		AchievementObjectives_DisplayCriteria(objectives, id);
 		if ( objectives:GetHeight() > 0 ) then
-			objectives:SetPoint("TOP", button.hiddenDescription, "BOTTOM", 0, -8);
-			objectives:SetPoint("LEFT", button.icon, "RIGHT", -5, -25);
-			objectives:SetPoint("RIGHT", button.shield, "LEFT", -10, 0);
+			objectives:SetPoint("TOP", "$parentHiddenDescription", "BOTTOM", 0, -8);
+			objectives:SetPoint("LEFT", "$parentIcon", "RIGHT", -5, -25);
+			objectives:SetPoint("RIGHT", "$parentShield", "LEFT", -10, 0);
 		end
 		height = ACHIEVEMENTBUTTON_COLLAPSEDHEIGHT + objectives:GetHeight();
 	end
@@ -2587,8 +2578,7 @@ function AchievementFrame_SelectAchievement(id, forceSelect)
 	AchievementFrameCategories_Update();
 
 	local shown, i = false, 1;
-	for scan = 1, 100 do
-		if shown then break end
+	while ( not shown ) do
 		for _, button in next, AchievementFrameCategoriesContainer.buttons do
 			if ( button.categoryID == category and math.ceil(button:GetBottom()) >= math.ceil(AchievementFrameAchievementsContainer:GetBottom())) then
 				shown = true;
@@ -2618,8 +2608,7 @@ function AchievementFrame_SelectAchievement(id, forceSelect)
 	AchievementFrameAchievements_Update();
 
 	local shown = false;
-	for scan = 1, 100 do
-		if shown then break end
+	while ( not shown ) do
 		for _, button in next, AchievementFrameAchievementsContainer.buttons do
 			if ( button.id == id and math.ceil(button:GetTop()) >= math.ceil(AchievementFrameAchievementsContainer:GetBottom())) then
 				-- The "True" here ignores modifiers, so you don't accidentally track or link this achievement. :P
@@ -2653,7 +2642,7 @@ function AchievementFrameAchievements_FindSelection()
 	local scrollHeight = AchievementFrameAchievementsContainer:GetHeight();
 	local newHeight = 0;
 	AchievementFrameAchievementsContainerScrollBar:SetValue(0);
-	for scan = 1, 100 do
+	while ( not shown ) do
 		for _, button in next, AchievementFrameAchievementsContainer.buttons do
 			if ( button.selected ) then
 				newHeight = AchievementFrameAchievementsContainerScrollBar:GetValue() + AchievementFrameAchievementsContainer:GetTop() - button:GetTop();
@@ -2750,8 +2739,7 @@ function AchievementFrame_SelectSummaryStatistic (criteriaId)
 	AchievementFrameCategoriesContainerScrollBar:SetValue(0);
 
 	local shown, i = false, 1;
-	for scan = 1, 100 do
-		if shown then break end
+	while ( not shown ) do
 		for _, button in next, AchievementFrameCategoriesContainer.buttons do
 			if ( button.categoryID == category and math.ceil(button:GetBottom()) >= math.ceil(AchievementFrameAchievementsContainer:GetBottom())) then
 				shown = true;
@@ -2761,7 +2749,7 @@ function AchievementFrame_SelectSummaryStatistic (criteriaId)
 		if ( not shown ) then
 			local _, maxVal = AchievementFrameCategoriesContainerScrollBar:GetMinMaxValues();
 			if ( AchievementFrameCategoriesContainerScrollBar:GetValue() == maxVal ) then
-				return
+				assert(false)
 			else
 				HybridScrollFrame_OnMouseWheel(AchievementFrameCategoriesContainer, -1);
 			end
@@ -2770,7 +2758,7 @@ function AchievementFrame_SelectSummaryStatistic (criteriaId)
 		-- Remove me if everything's working fine
 		i = i + 1;
 		if ( i > 100 ) then
-			return;
+			assert(false);
 		end
 	end
 
@@ -2778,8 +2766,7 @@ function AchievementFrame_SelectSummaryStatistic (criteriaId)
 	AchievementFrameStatsContainerScrollBar:SetValue(0);
 
 	local shown, i = false, 1;
-	for scan = 1, 100 do
-		if shown then break end
+	while ( not shown ) do
 		for _, button in next, AchievementFrameStatsContainer.buttons do
 			if ( button.id == id and math.ceil(button:GetBottom()) >= math.ceil(AchievementFrameStatsContainer:GetBottom())) then
 				AchievementStatButton_OnClick(button);
@@ -2795,7 +2782,7 @@ function AchievementFrame_SelectSummaryStatistic (criteriaId)
 		elseif ( not shown ) then
 			local _, maxVal = AchievementFrameStatsContainerScrollBar:GetMinMaxValues();
 			if ( AchievementFrameStatsContainerScrollBar:GetValue() == maxVal ) then
-				return
+				assert(false)
 			else
 				HybridScrollFrame_OnMouseWheel(AchievementFrameStatsContainer, -1);
 			end
@@ -2804,7 +2791,7 @@ function AchievementFrame_SelectSummaryStatistic (criteriaId)
 		-- Remove me if everything's working fine.
 		i = i + 1;
 		if ( i > 100 ) then
-			return;
+			assert(false);
 		end
 	end
 end
@@ -2830,7 +2817,7 @@ function AchievementFrameComparisonContainer_OnLoad (parent)
 			-- getmetatable(self).__index.Show(self);
 		end
 
-	AchievementFrameComparisonContainerScrollBar.OriginalHide = AchievementFrameComparisonContainerScrollBar.Hide
+	AchievementFrameComparisonContainerScrollBar.OriginalShow = AchievementFrameComparisonContainerScrollBar.Hide
 	AchievementFrameComparisonContainerScrollBar.Hide =
 		function (self)
 			AchievementFrameComparison:SetWidth(650);
@@ -2849,7 +2836,7 @@ function AchievementFrameComparisonContainer_OnLoad (parent)
 end
 
 function AchievementFrameComparisonStatsContainer_OnLoad (parent)
-	AchievementFrameComparisonStatsContainerScrollBar.OriginalShow = AchievementFrameComparisonStatsContainerScrollBar.Show
+	AchievementFrameComparisonStatsContainerScrollBar.OriginalShow = AchievementFrameComparisonContainerScrollBar.Show
 	AchievementFrameComparisonStatsContainerScrollBar.Show =
 		function (self)
 			AchievementFrameComparison:SetWidth(626);
@@ -2860,7 +2847,7 @@ function AchievementFrameComparisonStatsContainer_OnLoad (parent)
 			-- getmetatable(self).__index.Show(self);
 		end
 
-	AchievementFrameComparisonStatsContainerScrollBar.OriginalHide = AchievementFrameComparisonStatsContainerScrollBar.Hide
+	AchievementFrameComparisonStatsContainerScrollBar.OriginalShow = AchievementFrameComparisonContainerScrollBar.Hide
 	AchievementFrameComparisonStatsContainerScrollBar.Hide =
 		function (self)
 			AchievementFrameComparison:SetWidth(650);
@@ -2895,7 +2882,7 @@ function AchievementFrameComparison_OnHide ()
 end
 
 function AchievementFrameComparison_OnEvent (self, event, ...)
-	debug('AchievementFrameComparison_OnEvent: ' .. event)
+	warn('investigate xml AchievementFrameComparison_OnEvent ' .. event)
 	if ( event == "INSPECT_ACHIEVEMENT_READY" ) then
 		AchievementFrameComparisonHeaderPoints:SetText(GetComparisonAchievementPoints());
 		local selectedCategory;

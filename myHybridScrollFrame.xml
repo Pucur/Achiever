@@ -77,11 +77,11 @@
 					<OnLoad>
 						this:GetParent():GetParent().scrollUp = this;
 						this:Disable();
-						this:RegisterForClicks("LeftButtonUp");
+						this:RegisterForClicks("LeftButtonUp", "LeftButtonDown");
 						this.direction = 1;
 					</OnLoad>
 					<OnClick>
-						HybridScrollFrameScrollButton_OnClick(this, arg1);
+						HybridScrollFrameScrollButton_OnClick(this, button, down);
 					</OnClick>
 				</Scripts>
 				<NormalTexture inherits="HybridScrollBarButton" file="Interface\Buttons\UI-ScrollBar-ScrollUpButton-Up"/>
@@ -104,11 +104,11 @@
 					<OnLoad>
 						this:GetParent():GetParent().scrollDown = this;
 						this:Disable();
-						this:RegisterForClicks("LeftButtonUp");
+						this:RegisterForClicks("LeftButtonUp", "LeftButtonDown");
 						this.direction = -1;
 					</OnLoad>
 					<OnClick>
-						HybridScrollFrameScrollButton_OnClick(this, arg1);
+						HybridScrollFrameScrollButton_OnClick(this, button, down);
 					</OnClick>
 				</Scripts>
 				<NormalTexture inherits="HybridScrollBarButton" file="Interface\Buttons\UI-ScrollBar-ScrollDownButton-Up"/>

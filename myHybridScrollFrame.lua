@@ -55,9 +55,8 @@ function HybridScrollFrame_OnMouseWheel (self, delta, stepSize)
 		return;
 	end
 
-	local minVal, maxVal = 0, math.max(0, self.range or 0);
+	local minVal, maxVal = 0, self.range;
 	stepSize = stepSize or self.stepSize or self.buttonHeight;
-	if not stepSize or stepSize <= 0 then return end
 	if ( delta == 1 ) then
 		self.scrollBar:SetValue(max(minVal, self.scrollBar:GetValue() - stepSize));
 	else
@@ -66,13 +65,11 @@ function HybridScrollFrame_OnMouseWheel (self, delta, stepSize)
 end
 
 function HybridScrollFrameScrollButton_OnUpdate (self, elapsed)
-	self = self or this
-	elapsed = tonumber(elapsed) or tonumber(arg1) or 0
 	self.timeSinceLast = self.timeSinceLast + elapsed;
 	if ( self.timeSinceLast >= ( self.updateInterval or 0.08 ) ) then
 		if ( not IsMouseButtonDown("LeftButton") ) then
 			self:SetScript("OnUpdate", nil);
-		elseif ( MouseIsOver(self) ) then
+		elseif ( self:IsMouseOver() ) then
 			local parent = self.parent or self:GetParent():GetParent();
 			HybridScrollFrame_OnMouseWheel (parent, self.direction, (self.stepSize or parent.buttonHeight/3));
 			self.timeSinceLast = 0;
@@ -83,12 +80,6 @@ end
 function HybridScrollFrameScrollButton_OnClick (self, button, down)
 	local parent = self.parent or self:GetParent():GetParent();
 
-	-- TBC XML uses arg1, not the later 'button'/'down' locals.
-	if down == nil then
-		HybridScrollFrame_OnMouseWheel(parent, self.direction);
-		PlaySound("UChatScrollButton");
-		return;
-	end
 	if ( down ) then
 		self.timeSinceLast = (self.timeToStart or -0.2);
 		self:SetScript("OnUpdate", HybridScrollFrameScrollButton_OnUpdate);
@@ -100,7 +91,7 @@ function HybridScrollFrameScrollButton_OnClick (self, button, down)
 end
 
 function HybridScrollFrame_Update (self, totalHeight, displayedHeight)
-	local range = math.max(0, totalHeight - self:GetHeight());
+	local range = totalHeight - self:GetHeight();
 	if ( range > 0 and self.scrollBar ) then
 		local minVal, maxVal = self.scrollBar:GetMinMaxValues();
 		if ( math.floor(self.scrollBar:GetValue()) >= math.floor(maxVal) ) then
@@ -220,7 +211,6 @@ function HybridScrollFrame_CreateButtons (self, buttonTemplate, initialOffsetX, 
 		tinsert(buttons, button);
 	end
 
-	if not buttonHeight or buttonHeight <= 0 then return end
 	self.buttonHeight = round(buttonHeight);
 
 	local numButtons = math.ceil(self:GetHeight() / buttonHeight) + 1;

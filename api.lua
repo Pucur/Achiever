@@ -51,33 +51,15 @@ local function IsAchievementCompleted(id)
 end
 
 local function GetPreviousID(id)
-    return Achiever:GetSafeChainLink(id, false)
+    return achieverDB.achievements.previousById[tonumber(id)]
 end
 
 local function GetNextID(id)
-    return Achiever:GetSafeChainLink(id, true)
-end
-
--- Broken/cyclic server data must not trap the UI's progressive-chain loops.
-function Achiever:GetSafeChainLink(id, forward)
-    id = tonumber(id)
-    if not id then return nil end
-    local links = forward and achieverDB.achievements.nextById or achieverDB.achievements.previousById
-    local first, cursor, seen = links[id], id, {}
-    for _ = 1, 128 do
-        if seen[cursor] then return nil end
-        seen[cursor] = true
-        cursor = links[cursor]
-        if not cursor or not achieverDB.achievements.data[cursor] then
-            return first and achieverDB.achievements.data[first] and first or nil
-        end
-    end
-    return nil
+    return achieverDB.achievements.nextById[tonumber(id)]
 end
 
 local function IsAchievementVisible(id, includeAll)
     if (not id) then return false end
-    if not achieverDB.achievements.data[id] then return false end
     if (includeAll) then return true end
     if (IsAchievementCompleted(id)) then
         local nextId = GetNextID(id)
@@ -140,7 +122,7 @@ function GetAchievementInfo(id, index, includeAll)
         local category = GetCategory(id)
         if (category) then
             local achs = {}
-            for _, aid in pairs(achieverDB.achievements.byCategory[tonumber(id)] or {}) do
+            for _, aid in pairs(achieverDB.achievements.byCategory[tonumber(id)]) do
                 if IsAchievementVisible(aid, all) then
                     table.insert(achs, GetAchievement(aid))
                 end
@@ -174,7 +156,6 @@ function GetAchievementInfo(id, index, includeAll)
         if (IsAchievementCompleted(ach.id)) then
             debug('GetAchievementInfo '.. ach.id)
             local time = GetAchievementCompletionTime(ach.id)
-            time = tonumber(time) or 0
             month, day, year = tonumber(date('%m', time)), tonumber(date('%d', time)), tonumber(date('%y', time))
             -- local month, day, year = playerAch.month, playerAch.day, playerAch.year
             completed, earnedBy = true, UnitName('player')
@@ -217,7 +198,7 @@ end
 function GetStatisticsCategoryList()
     local result = {}
     local rootStatCategoryIdList = achieverDB.categories.byParent['1'];
-    for i, v in pairs(rootStatCategoryIdList or {}) do
+    for i, v in pairs(rootStatCategoryIdList) do
         table.insert(result, v)
         local subStatCategoryIdList = achieverDB.categories.byParent[tostring(v)];
         if (subStatCategoryIdList) then
@@ -305,8 +286,7 @@ end
 function GetTotalAchievementPoints(inGuildView)
     local points = 0
     for id, _ in pairs(achieverDBpc.achievements) do
-        local achievement = achieverDB.achievements.data[id]
-        if achievement then points = points + (achievement.points or 0) end
+        points = points + achieverDB.achievements.data[id].points
     end
     return points
 end
@@ -323,15 +303,13 @@ function GetLatestCompletedAchievements(inGuildView)
     local completedAchievemenIdHash = {}
     local count = 0
     for k, v in pairs(achieverDBpc.achievements) do
-        if achieverDB.achievements.data[k] then
-            count = count + 1
-            completedAchievemenIdHash[count] = k
-        end
+        count = count + 1
+        completedAchievemenIdHash[count] = k
     end
     if (count == 0) then return end
     if (count == 1) then return completedAchievemenIdHash[1] end
     table.sort(completedAchievemenIdHash, function(a, b)
-        local delta = (tonumber(achieverDBpc.achievements[a].date) or 0) - (tonumber(achieverDBpc.achievements[b].date) or 0)
+        local delta = achieverDBpc.achievements[a].date - achieverDBpc.achievements[b].date
         if (delta ~= 0) then return delta > 0 end
         return a > b
     end)
@@ -449,14 +427,9 @@ function GetAchievementCriteriaInfo(achievementID, criteriaIndex)
     local pCriteria = nil
     local criteria = nil
     local criteriaIdList = achieverDB.criteria.byAchievement[achievementID]
-    local criteriaId = nil
+    local criteriaID = nil
     if (criteriaIdList) then
-        local orders = {}
-        for order, cid in pairs(criteriaIdList) do
-            if achieverDB.criteria.data[cid] then orders[#orders + 1] = order end
-        end
-        table.sort(orders)
-        criteriaId = orders[criteriaIndex] and criteriaIdList[orders[criteriaIndex]]
+        criteriaId = criteriaIdList[criteriaIndex]
         if (criteriaId) then
             criteria = achieverDB.criteria.data[criteriaId]
             pCriteria = achieverDBpc.criteria[criteriaId]
@@ -466,17 +439,14 @@ function GetAchievementCriteriaInfo(achievementID, criteriaIndex)
         end
     end
 
-    if not criteria then
-        return '', 0, false, 0, 0, '', 0, 0, '', 0, false
-    end
-    local name = criteria.name or ''
+    local name = criteria.name
     local criteriaType = criteria.type
     local quantity = 0
-    local reqQuantity = criteria.count or 0
+    local reqQuantity = criteria.count
     local completed = false
     local charName = UnitName('player')
     local quantityString = ''
-    local flags = criteria.flags or 0
+    local flags = criteria.flags
     local assetId = criteria.assetId
 
     -- Fix achievement criterias not showing as completed
@@ -486,11 +456,11 @@ function GetAchievementCriteriaInfo(achievementID, criteriaIndex)
 
     if (criteria) then
         if (pCriteria) then
-            quantity = tonumber(pCriteria.counter) or 0
+            quantity = pCriteria.counter
         else
             quantity = 0
         end
-        completed = pCriteria ~= nil and quantity >= reqQuantity
+        completed = pCriteria and reqQuantity == quantity
         quantityString = quantity .. ' / ' .. reqQuantity
     end
 
@@ -499,7 +469,7 @@ function GetAchievementCriteriaInfo(achievementID, criteriaIndex)
         quantityString = quantityString .. ' / ' .. getTextGSC(reqQuantity, true, false)
     end
 
-    return name, criteriaType, completed, quantity, reqQuantity, charName, flags, assetId, quantityString, criteriaId, true
+    return name, criteriaType, completed, quantity, reqQuantity, charName, flags, assedId, quantityString, criteriaId
     -- local achievement = GetAchievement(achievementID)
     -- if (achievement) then
     --     local criterias = achievement:GetCriteriasSorted()
@@ -525,19 +495,15 @@ function GetAchievementNumCriteria(achievementID)
     if (achievement) then
         local criteriaList = achieverDB.criteria.byAchievement[achievementID]
         if (criteriaList) then
-            -- Indexes may be zero-based or sparse. UI indexes are always 1..N.
-            for _, criteriaId in pairs(criteriaList) do
-                if achieverDB.criteria.data[criteriaId] then total = total + 1 end
+            for _, criteriaId in pairs(achieverDB.criteria.byAchievement[achievementID]) do
+                local criteria = achieverDB.criteria.data[criteriaId];
+                if (criteria) then
+                    if (criteria.name) then total = total + 1 end
+                end
             end
         end
     end
-    return math.min(total, 256)
-end
-
-function GetAchievementInfoFromCriteria(criteriaID)
-    local criteria = achieverDB.criteria.data[tonumber(criteriaID)]
-    if not criteria then return GetAchievementInfo(-1) end
-    return GetAchievementInfo(criteria.achievementId)
+    return total
 end
 
 function ClearAchievementComparisonUnit()
@@ -581,14 +547,6 @@ function GetNumTrackedAchievements()
     return 0
 end
 
--- This port has no tracking transport/watch-frame implementation.
-function GetTrackedAchievements()
-end
-
-function IsTrackedAchievement(id)
-    return false
-end
-
 local lastSearchResult = {}
 
 function SetAchievementSearchString(text)
@@ -615,6 +573,5 @@ function GetNumFilteredAchievements()
 end
 
 function GetFilteredAchievementID(index)
-    local result = lastSearchResult[index]
-    return result and result.id or nil
+    return lastSearchResult[index].id
 end

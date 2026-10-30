@@ -1,8 +1,8 @@
 ## Interface: 20400
-## Title: Achiever|cFF00FF00 v0.3.4|r by |cFF00FF00TsAah|r
+## Title: Achiever|cFF00FF00 v0.2|r by |cFF00FF00TsAah|r
 ## Author: TsAah
 ## Notes: Achievements UI for WoW 2.4.3
-## Version: 0.3.4
+## Version: 0.2
 ## X-Category: Interface Enhancements
 ## SavedVariables: achieverDB, achieverDBalliance, achieverDBhorde
 ## SavedVariablesPerCharacter: achieverDBpc
@@ -14,13 +14,14 @@ Achiever.xml
 iconTable.lua
 api.lua
 myAlertFrames.lua
+myAlertFrames.xml
 myUIPanelTemplates.lua
 myUIPanelTemplates.xml
 myUIDropDownMenu.lua
-myUIDropDownMenuTemplates.xml
 myUIDropDownMenu.xml
+myUIDropDownMenuTemplates.xml
 myHybridScrollFrame.lua
 myHybridScrollFrame.xml
 myAchievementUI.lua
 myAchievementUI.xml
-myAlertFrames.xml
+

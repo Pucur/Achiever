@@ -172,7 +172,6 @@ function AchievementAlertFrame_GetAlertFrame()
 end
 
 function AchievementAlertFrame_OnClick (self)
-	if Achiever and Achiever.state ~= 'ready' then return end
 	local id = self.id;
 	if ( not id ) then
 		return;
@@ -196,8 +195,6 @@ function AchievementAlertFrame_OnHide (self)
 end
 
 function AchievementAlertFrame_OnUpdate(self)
-	local this = self or _G.this
-	if not this or not this.oldFrameTime then return end
 	local newFrameTime = GetTime()
 	local elapsed = newFrameTime - this.oldFrameTime
 	this.oldFrameTime = newFrameTime

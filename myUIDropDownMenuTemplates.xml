@@ -111,7 +111,7 @@
 					<OnEnter>
 						local _G, _ = _G or getfenv()
 						local level =  this:GetParent():GetParent():GetID() + 1;
-						local listFrame = _G["myDropDownList"..level];
+						local listFrame = _G["DropDownList"..level];
 						if ( not listFrame or not listFrame:IsShown() or select(2, listFrame:GetPoint()) ~= this ) then
 							myToggleDropDownMenu(level, this:GetParent().value, nil, nil, nil, nil, this:GetParent().menuList, this);
 						end
@@ -167,7 +167,7 @@
 				local _G, _ = _G or getfenv()
 				if ( this.hasArrow ) then
 					local level =  this:GetParent():GetID() + 1;
-					local listFrame = _G["myDropDownList"..level];
+					local listFrame = _G["DropDownList"..level];
 					if ( not listFrame or not listFrame:IsShown() or select(2, listFrame:GetPoint()) ~= this ) then
 						myToggleDropDownMenu(this:GetParent():GetID() + 1, this.value, nil, nil, nil, nil, this.menuList, this);
 					end
@@ -239,14 +239,14 @@
 					</OnLoad>
 				</Scripts>
 			</Frame>
-			<Button name="$parentButton1" inherits="myUIDropDownMenuButtonTemplate" id="1"/>
-			<Button name="$parentButton2" inherits="myUIDropDownMenuButtonTemplate" id="2"/>
-			<Button name="$parentButton3" inherits="myUIDropDownMenuButtonTemplate" id="3"/>
-			<Button name="$parentButton4" inherits="myUIDropDownMenuButtonTemplate" id="4"/>
-			<Button name="$parentButton5" inherits="myUIDropDownMenuButtonTemplate" id="5"/>
-			<Button name="$parentButton6" inherits="myUIDropDownMenuButtonTemplate" id="6"/>
-			<Button name="$parentButton7" inherits="myUIDropDownMenuButtonTemplate" id="7"/>
-			<Button name="$parentButton8" inherits="myUIDropDownMenuButtonTemplate" id="8"/>
+			<Button name="$parentButton1" inherits="UIDropDownMenuButtonTemplate" id="1"/>
+			<Button name="$parentButton2" inherits="UIDropDownMenuButtonTemplate" id="2"/>
+			<Button name="$parentButton3" inherits="UIDropDownMenuButtonTemplate" id="3"/>
+			<Button name="$parentButton4" inherits="UIDropDownMenuButtonTemplate" id="4"/>
+			<Button name="$parentButton5" inherits="UIDropDownMenuButtonTemplate" id="5"/>
+			<Button name="$parentButton6" inherits="UIDropDownMenuButtonTemplate" id="6"/>
+			<Button name="$parentButton7" inherits="UIDropDownMenuButtonTemplate" id="7"/>
+			<Button name="$parentButton8" inherits="UIDropDownMenuButtonTemplate" id="8"/>
 		</Frames>
 		<Scripts>
 			<OnClick>
@@ -259,7 +259,7 @@
 				myUIDropDownMenu_StartCounting(this, motion);
 			</OnLeave>
 			<OnUpdate>
-				myUIDropDownMenu_OnUpdate(this, arg1);
+				myUIDropDownMenu_OnUpdate(this, elapsed);
 			</OnUpdate>
 			<OnShow>
 				local _G, _ = _G or getfenv()
@@ -273,7 +273,7 @@
 				end
 				this.showTime = nil;
 				if ( this:GetID() > 1 ) then
-					this.parent = _G["myDropDownList"..(this:GetID() - 1)];
+					this.parent = _G["DropDownList"..(this:GetID() - 1)];
 				end
 			</OnShow>
 			<OnHide>
