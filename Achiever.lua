@@ -1,59 +1,92 @@
 local _G, _ = _G or getfenv()
 
 ACHIEVER_ADDON_NAME = 'Achiever'
-local ACHIEVER_ADDON_VERSION = '0.0.2.0'
+local ACHIEVER_ADDON_VERSION = '0.0.2.1'
 local ACHIEVER_ADDON_CHANNEL = 'ACHIEVER_CHANNEL'
-local ACHIEVER_REQUESTED_DATA = false
 local ACHIEVER_STARTED = false
 local ACHIEVER_INIT = false
-local ACHIEVER_DATA_READY = false  -- az achievement ablak csak ekkor nyitható
-local READY_QUIET = 3.0            -- ennyi csend a utolsó szerver-csomag után
-local READY_HINT_AT = 20.0         -- ennyi mp után jelzünk, ha még nincs adat
+local ACHIEVER_DATA_READY = false
+local READY_QUIET = 3.0
+local READY_HINT_AT = 20.0
+local READY_MAX = 30.0
+local STARTUP_DELAY = 8.0
 local readyQuiet = 0
 local readyWaited = 0
 local readyHintShown = false
 local uiGateInstalled = false
+local startupTimer = nil
+local inWorld = false
 
+-- Biztosítjuk, hogy a táblák mindig létezzenek (SavedVariables előtt is).
+local function ensureDB()
+    if type(achieverDB) ~= 'table' then achieverDB = {} end
+    if type(achieverDB.categories) ~= 'table' then
+        achieverDB.categories = { version = -1, data = {}, byParent = {} }
+    end
+    if type(achieverDB.achievements) ~= 'table' then
+        achieverDB.achievements = { version = -1, totalPoints = 0, data = {}, byCategory = {}, nextById = {}, previousById = {} }
+    end
+    if type(achieverDB.criteria) ~= 'table' then
+        achieverDB.criteria = { version = -1, data = {}, byAchievement = {} }
+    end
+    if type(achieverDBpc) ~= 'table' then achieverDBpc = {} end
+    if type(achieverDBpc.criteria) ~= 'table' then achieverDBpc.criteria = {} end
+    if type(achieverDBpc.achievements) ~= 'table' then achieverDBpc.achievements = {} end
+    if achieverDBpc.debug == nil then achieverDBpc.debug = "disabled" end
+    if achieverDBpc.buttonmain == nil then achieverDBpc.buttonmain = "enabled" end
+    if achieverDBpc.buttonsmall == nil then achieverDBpc.buttonsmall = "disabled" end
+    if achieverDBpc.alert == nil then achieverDBpc.alert = "disabled" end -- loot CTD ellen alapból KI
+end
+ensureDB()
+
+local function say(msg)
+    if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(msg) end
+end
 local function debug(msg)
-    if achieverDBpc.debug == "enabled" then
-	    DEFAULT_CHAT_FRAME:AddMessage('|cffc663fcDEBUG: |cffff55ff'.. (msg or 'nil'))
+    if achieverDBpc and achieverDBpc.debug == "enabled" then
+        say('|cffc663fcDEBUG: |cffff55ff' .. tostring(msg or 'nil'))
     end
 end
 local function warn(msg)
-	DEFAULT_CHAT_FRAME:AddMessage('|cf3f3f66cWARN: |cffff55ff'.. (msg or 'nil'))
+    say('|cf3f3f66cWARN: |cffff55ff' .. tostring(msg or 'nil'))
 end
-
--- UI hívások védelme: egy hiányzó/hibás UI-frame ne rombolja le a chat-feldolgozást.
 local function safeUi(fn)
+    if type(fn) ~= 'function' then return end
     local ok, err = pcall(fn)
     if not ok then warn('Achiever UI error: ' .. tostring(err)) end
 end
 
 local function toggleDebug()
+    ensureDB()
     if achieverDBpc.debug == "enabled" then
         achieverDBpc.debug = "disabled"
-        DEFAULT_CHAT_FRAME:AddMessage('Achiever DEBUG mode disabled')
+        say('Achiever DEBUG mode disabled')
     else
         achieverDBpc.debug = "enabled"
-        DEFAULT_CHAT_FRAME:AddMessage('Achiever DEBUG mode enabled')
+        say('Achiever DEBUG mode enabled')
     end
 end
 
 SLASH_ACHIEVERDEBUG1 = "/acdebug"
-SlashCmdList.ACHIEVERDEBUG = function()
-    toggleDebug()
+SlashCmdList.ACHIEVERDEBUG = toggleDebug
+
+SLASH_ACHIEVERALERT1 = "/acalert"
+SlashCmdList.ACHIEVERALERT = function()
+    ensureDB()
+    if achieverDBpc.alert == "enabled" then
+        achieverDBpc.alert = "disabled"
+        say('Achiever alert popup disabled')
+    else
+        achieverDBpc.alert = "enabled"
+        say('Achiever alert popup enabled (may crash on TBC!)')
+    end
 end
 
 Achiever = CreateFrame("Frame")
-achieverDBpc = {
-    criteria = {},
-    achievements = {}
-}
 SLASH_RELOADUI1 = "/rl"
 SlashCmdList.RELOADUI = ReloadUI
 
 local function split(str, sep)
-    -- Keeps empty fields: gsub('[^sep]+') dropped them and shifted every later column.
     local res = {}
     if type(str) ~= 'string' then return res end
     sep = sep or ';'
@@ -70,6 +103,11 @@ local function split(str, sep)
     return res
 end
 
+local function tonum(v)
+    if v == nil or v == '' or v == '_' then return nil end
+    return tonumber(v)
+end
+
 Achiever:RegisterEvent("ADDON_LOADED")
 Achiever:RegisterEvent("CHAT_MSG_CHANNEL_NOTICE")
 Achiever:RegisterEvent("PLAYER_ENTERING_WORLD")
@@ -81,272 +119,237 @@ Achiever:RegisterEvent("PLAYER_LEAVING_WORLD")
 Achiever.version = ACHIEVER_ADDON_VERSION
 Achiever.channel = ACHIEVER_ADDON_CHANNEL
 Achiever.channelIndex = nil
-
 Achiever.achievementFrameSummaryCategorySubscribers = {}
 
 Achiever.processServerMessage = function(self, message)
+    if type(message) ~= 'string' then return end
+    ensureDB()
     readyQuiet = 0
 
     local params = split(message, '#')
-    if (params[1] == 'ACHI') then
-        if (params[2] == 'AC') then
-            --debug('server response: new achievement entry ')
-            local a = split(params[3], ';')
-            local id = tonumber(a[1])
-            achieverDB.achievements.data[id] = {}
-            achieverDB.achievements.data[id].id = tonumber(id)
-            achieverDB.achievements.data[id].faction = tonumber(a[2])
-            achieverDB.achievements.data[id].previousId = tonumber(a[3])
-            local name = ''
-            if (a[4] ~= '_') then name = a[4] end
-            achieverDB.achievements.data[id].name = name
-            local description = ''
-            if (a[5] ~= '_') then description = a[5] end
-            achieverDB.achievements.data[id].description = description
-            achieverDB.achievements.data[id].categoryId = tonumber(a[6])
-            achieverDB.achievements.data[id].points = tonumber(a[7])
-            achieverDB.achievements.data[id].order = tonumber(a[8])
-            achieverDB.achievements.data[id].flags = tonumber(a[9])
-            achieverDB.achievements.data[id].icon = tonumber(a[10])
-            local titleReward = ''
-            if (a[11] ~= '_') then titleReward = a[11] end
-            achieverDB.achievements.data[id].titleReward = titleReward
-            achieverDB.achievements.data[id].count = tonumber(a[12])
-            achieverDB.achievements.data[id].refAchievement = tonumber(a[13])
-            achieverDB.achievements.totalPoints = achieverDB.achievements.totalPoints + tonumber(a[7])
+    if params[1] ~= 'ACHI' then return end
 
-            local n = tonumber(a[14])
-            local c = tonumber(a[15])
+    if params[2] == 'AC' then
+        local a = split(params[3], ';')
+        local id = tonum(a[1])
+        if not id then return end
+        local points = tonum(a[7]) or 0
+        local categoryId = tonum(a[6])
+        local order = tonum(a[8])
+        achieverDB.achievements.data[id] = {
+            id = id,
+            faction = tonum(a[2]),
+            previousId = tonum(a[3]),
+            name = (a[4] == '_' or not a[4]) and '' or a[4],
+            description = (a[5] == '_' or not a[5]) and '' or a[5],
+            categoryId = categoryId,
+            points = points,
+            order = order,
+            flags = tonum(a[9]),
+            icon = tonum(a[10]),
+            titleReward = (a[11] == '_' or not a[11]) and '' or a[11],
+            count = tonum(a[12]),
+            refAchievement = tonum(a[13]),
+        }
+        achieverDB.achievements.totalPoints = (achieverDB.achievements.totalPoints or 0) + points
+        if categoryId and order then
+            achieverDB.achievements.byCategory[categoryId] = achieverDB.achievements.byCategory[categoryId] or {}
+            achieverDB.achievements.byCategory[categoryId][order] = id
+        end
+        local previousId = tonum(a[3])
+        if previousId and previousId ~= 0 then
+            achieverDB.achievements.previousById[id] = previousId
+            achieverDB.achievements.nextById[previousId] = id
+        end
+        ACHIEVER_STARTED = true
 
-            local categoryId = tonumber(a[6])
-            if (achieverDB.achievements.byCategory[categoryId] == nil) then
-                achieverDB.achievements.byCategory[categoryId] = {}
-            end
-            -- table.insert(achieverDB.achievements.byCategory[categoryId], id)
-            achieverDB.achievements.byCategory[categoryId][tonumber(a[8])] = id
+    elseif params[2] == 'ACV' then
+        achieverDB.achievements.version = tonum(params[3])
+        ACHIEVER_STARTED = true
 
-            local previousId = tonumber(a[3])
-            if (previousId == 0) then previousId = nil end
-            if (previousId) then
-                achieverDB.achievements.previousById[id] = previousId
-                achieverDB.achievements.nextById[previousId] = id
-            end
+    elseif params[2] == 'CA' then
+        local a = split(params[3], ";")
+        local id = tonum(a[1])
+        if not id then return end
+        local parentId = tonum(a[2])
+        local order = tonum(a[4])
+        achieverDB.categories.data[id] = {
+            id = id,
+            parentId = parentId,
+            name = (a[3] == '_' or not a[3]) and '' or a[3],
+            order = order,
+        }
+        if parentId and order then
+            achieverDB.categories.byParent[parentId] = achieverDB.categories.byParent[parentId] or {}
+            achieverDB.categories.byParent[parentId][order] = id
+        end
+        ACHIEVER_STARTED = true
 
-            ACHIEVER_STARTED = true
-            
-            if (n == c) then
-                --debug('loaded achievements from server')
-            end
+    elseif params[2] == 'CAV' then
+        achieverDB.categories.version = tonum(params[3])
+        ACHIEVER_STARTED = true
 
-        elseif (params[2] == 'ACV') then
-            debug('server response: achievement data version')
-            achieverDB.achievements.version = tonumber(params[3])
-            ACHIEVER_STARTED = true
-        elseif (params[2] == 'CA') then
-            local a = split(params[3], ";")
-            local id = tonumber(a[1])
-            achieverDB.categories.data[id] = {}
-            achieverDB.categories.data[id].id = tonumber(id)
-            achieverDB.categories.data[id].parentId = tonumber(a[2])
-            local name = ''
-            if (a[3] ~= '_') then name = a[3] end
-            achieverDB.categories.data[id].name = name
-            achieverDB.categories.data[id].order = tonumber(a[4])
-            local n = tonumber(a[5])
-            local c = tonumber(a[6])
+    elseif params[2] == 'CR' then
+        local a = split(params[3], ";")
+        local id = tonum(a[1])
+        if not id then return end
+        local achievementId = tonum(a[2])
+        local order = tonum(a[15])
+        achieverDB.criteria.data[id] = {
+            id = id,
+            achievementId = achievementId,
+            type = tonum(a[3]),
+            assetId = tonum(a[4]),
+            count = tonum(a[5]),
+            assetId1 = tonum(a[6]),
+            count1 = tonum(a[7]),
+            assetId2 = tonum(a[8]),
+            count2 = tonum(a[9]),
+            name = (a[10] == '_' or not a[10]) and '' or a[10],
+            flags = tonum(a[11]),
+            timedType = tonum(a[12]),
+            timerStartEvent = tonum(a[13]),
+            timeLimit = tonum(a[14]),
+            order = order,
+        }
+        if achievementId and order then
+            achieverDB.criteria.byAchievement[achievementId] = achieverDB.criteria.byAchievement[achievementId] or {}
+            achieverDB.criteria.byAchievement[achievementId][order] = id
+        end
+        ACHIEVER_STARTED = true
 
-            local parentId = a[2]
-            if (achieverDB.categories.byParent[parentId] == nil) then
-                achieverDB.categories.byParent[parentId] = {}
-            end
-            -- table.insert(achieverDB.categories.byParent[parentId], id)
-            achieverDB.categories.byParent[parentId][tonumber(a[4])] = id
-            ACHIEVER_STARTED = true
+    elseif params[2] == 'CRV' then
+        achieverDB.criteria.version = tonum(params[3])
+        ACHIEVER_STARTED = true
 
-            if (n == c) then
-                debug('loaded categories from server')
-            end
-        elseif (params[2] == 'CAV') then
-            debug('server response: criteria data version')
-            achieverDB.categories.version = tonumber(params[3])
-            ACHIEVER_STARTED = true
-        elseif (params[2] == 'CR') then
-            --debug('server response: get all criteria')
-            local a = split(params[3], ";")
-            local id = tonumber(a[1])
-            achieverDB.criteria.data[id] = {}
-            achieverDB.criteria.data[id].id = tonumber(id)
-            achieverDB.criteria.data[id].achievementId = tonumber(a[2])
-            achieverDB.criteria.data[id].type = tonumber(a[3])
-            achieverDB.criteria.data[id].assetId = tonumber(a[4])
-            achieverDB.criteria.data[id].count = tonumber(a[5])
-            achieverDB.criteria.data[id].assetId1 = tonumber(a[6])
-            achieverDB.criteria.data[id].count1 = tonumber(a[7])
-            achieverDB.criteria.data[id].assetId2 = tonumber(a[8])
-            achieverDB.criteria.data[id].count2 = tonumber(a[9])
-            local name = ''
-            if (a[10] ~= '_') then name = a[10] end
-            achieverDB.criteria.data[id].name = name
-            achieverDB.criteria.data[id].flags = tonumber(a[11])
-            achieverDB.criteria.data[id].timedType = tonumber(a[12])
-            achieverDB.criteria.data[id].timerStartEvent = tonumber(a[13])
-            achieverDB.criteria.data[id].timeLimit = tonumber(a[14])
-            achieverDB.criteria.data[id].order = tonumber(a[15])
-            local n = tonumber(a[16])
-            local c = tonumber(a[17])
+    elseif params[2] == 'CH_AC' then
+        local a = split(params[3], ";")
+        local id = tonum(a[1])
+        if not id then return end
+        achieverDBpc.achievements[id] = { date = tonum(a[2]) }
+        ACHIEVER_STARTED = true
 
-            local achievementId = tonumber(a[2])
-            if (achieverDB.criteria.byAchievement[achievementId] == nil) then
-                achieverDB.criteria.byAchievement[achievementId] = {}
-            end
-            achieverDB.criteria.byAchievement[achievementId][tonumber(a[15])] = id
-            -- table.insert(achieverDB.criteria.byAchievement[achievementId], id)
-            ACHIEVER_STARTED = true
+    elseif params[2] == 'CH_CR' then
+        local a = split(params[3], ";")
+        local id = tonum(a[1])
+        if not id then return end
+        achieverDBpc.criteria[id] = { counter = tonum(a[2]), date = tonum(a[3]) }
+        ACHIEVER_STARTED = true
 
-            if (n == c) then
-                --debug('loaded criteria from server')
-            end
-        elseif (params[2] == 'CRV') then
-            debug('server response: criteria data version')
-            achieverDB.criteria.version = tonumber(params[3])
-            ACHIEVER_STARTED = true
-        elseif (params[2] == 'CH_AC') then
-            --debug('server response: char achievements')
-            local a = split(params[3], ";")
-            local id = tonumber(a[1])
-            achieverDBpc.achievements[id] = {}
-            achieverDBpc.achievements[id].date = tonumber(a[2])
-            ACHIEVER_STARTED = true
-        elseif (params[2] == 'CH_CR') then
-            --debug('server response: char criteria')
-            local a = split(params[3], ";")
-            local id = tonumber(a[1])
-            achieverDBpc.criteria[id] = {}
-            achieverDBpc.criteria[id].counter = tonumber(a[2])
-            achieverDBpc.criteria[id].date = tonumber(a[3])
-            ACHIEVER_STARTED = true
-        elseif (params[2] == 'AE') then
-            local a = split(params[3], ";")
-            local id = tonumber(a[1])
-            if (not achieverDBpc.achievements) then achieverDBpc.achievements = {} end
-            achieverDBpc.achievements[id] = {}
-            achieverDBpc.achievements[id].date = tonumber(a[2])
-            -- A riasztást külön védjük: ha a UI-frissítés hibázna, az achievement ne vesszen el.
+    elseif params[2] == 'AE' then
+        local a = split(params[3], ";")
+        local id = tonum(a[1])
+        if not id then return end
+        achieverDBpc.achievements[id] = { date = tonum(a[2]) }
+
+        -- Alapból NEM hívjuk az AlertFrame-et: TBC-n ez okozta a loot-CTD-t.
+        if achieverDBpc.alert == "enabled" and type(AlertFrame_ShowAchievementEarned) == 'function' then
             safeUi(function() AlertFrame_ShowAchievementEarned(id) end)
-            safeUi(function()
-                Achiever_RefreshUi()
-                AchievementFrameAchievements_OnEvent(_G['AchievementFrameAchievements'], 'ACHIEVEMENT_EARNED', id)
-                for k, v in pairs(self.achievementFrameSummaryCategorySubscribers) do
+        end
+
+        safeUi(function()
+            if type(Achiever_RefreshUi) == 'function' then Achiever_RefreshUi() end
+            local af = _G['AchievementFrameAchievements']
+            if af and type(AchievementFrameAchievements_OnEvent) == 'function' then
+                AchievementFrameAchievements_OnEvent(af, 'ACHIEVEMENT_EARNED', id)
+            end
+            for _, v in pairs(self.achievementFrameSummaryCategorySubscribers or {}) do
+                if v and type(AchievementFrameSummaryCategory_OnEvent) == 'function' then
                     AchievementFrameSummaryCategory_OnEvent(v, 'ACHIEVEMENT_EARNED', id)
                 end
-                AchievementFrameSummary_Update()
-            end)
-            local ad = achieverDB.achievements.data[id]
-            if ad then debug("ACHIEVEMENT EARNED " .. tostring(ad.name)) end
-            ACHIEVER_STARTED = true
-        elseif (params[2] == 'ACU') then
-            local a = split(params[3], ";")
-            local id = tonumber(a[1])
-            if (not achieverDBpc.criteria) then achieverDBpc.criteria = {} end
-            achieverDBpc.criteria[id] = {}
-            achieverDBpc.criteria[id].achievementId = tonumber(a[2])
-            achieverDBpc.criteria[id].counter = tonumber(a[3])
-            achieverDBpc.criteria[id].date = tonumber(a[4])
-            safeUi(function()
-                AchievementFrameAchievements_OnEvent(_G['AchievementFrameAchievements'], 'CRITERIA_UPDATE', id)
-            end)
-            safeUi(function()
-                AchievementFrameStats_OnEvent(_G['AchievementFrameStats'], 'CRITERIA_UPDATE', id)
-            end)
-            local ad = achieverDB.achievements.data[tonumber(a[2])]
-            local cd = achieverDB.criteria.data[id]
-            if ad and cd then
-                debug("ACHIEVEMENT CRITERIA UPDATE " .. tostring(ad.name) .. '[' .. tostring(cd.name) .. ']')
             end
-            ACHIEVER_STARTED = true
-        else
-            warn('server response: unhandled ' .. params[2])
+            if type(AchievementFrameSummary_Update) == 'function' then
+                AchievementFrameSummary_Update()
+            end
+        end)
+
+        local ad = achieverDB.achievements.data[id]
+        if ad then debug("ACHIEVEMENT EARNED " .. tostring(ad.name)) end
+        ACHIEVER_STARTED = true
+
+    elseif params[2] == 'ACU' then
+        local a = split(params[3], ";")
+        local id = tonum(a[1])
+        if not id then return end
+        local achievementId = tonum(a[2])
+        achieverDBpc.criteria[id] = {
+            achievementId = achievementId,
+            counter = tonum(a[3]),
+            date = tonum(a[4]),
+        }
+        safeUi(function()
+            local af = _G['AchievementFrameAchievements']
+            if af and type(AchievementFrameAchievements_OnEvent) == 'function' then
+                AchievementFrameAchievements_OnEvent(af, 'CRITERIA_UPDATE', id)
+            end
+        end)
+        safeUi(function()
+            local af = _G['AchievementFrameStats']
+            if af and type(AchievementFrameStats_OnEvent) == 'function' then
+                AchievementFrameStats_OnEvent(af, 'CRITERIA_UPDATE', id)
+            end
+        end)
+        local ad = achievementId and achieverDB.achievements.data[achievementId]
+        local cd = achieverDB.criteria.data[id]
+        if ad and cd then
+            debug("ACHIEVEMENT CRITERIA UPDATE " .. tostring(ad.name) .. '[' .. tostring(cd.name) .. ']')
         end
+        ACHIEVER_STARTED = true
+    else
+        warn('server response: unhandled ' .. tostring(params[2]))
     end
 end
 
 Achiever.apiEnableDataSend = function(self, version)
-
-    debug('request to enable sending achievement info, ' .. version)
-    SendChatMessage('.achievements enableAchiever ' .. version)
-    --SendChatMessage('!achievements getCategoties ' .. version, 'CHANNEL', nil, Achiever.channelIndex)
+    debug('request to enable sending achievement info, ' .. tostring(version))
+    SendChatMessage('.achievements enableAchiever ' .. tostring(version))
 end
 Achiever.apiRequestCategoryInfo = function(self, version)
-
-    --debug('requested information about categories from server, ' .. version)
-    SendChatMessage('.achievements getCategories ' .. version)
-    --SendChatMessage('!achievements getCategoties ' .. version, 'CHANNEL', nil, Achiever.channelIndex)
+    SendChatMessage('.achievements getCategories ' .. tostring(version))
 end
 Achiever.apiRequestAchievementInfo = function(self, version)
-
-    --debug('requested information about achievements from server, ' .. version)
-    SendChatMessage('.achievements getAchievements ' .. version)
-    --SendChatMessage('!achievements getAchievements ' .. version, 'CHANNEL', nil, Achiever.channelIndex)
+    SendChatMessage('.achievements getAchievements ' .. tostring(version))
 end
 Achiever.apiRequestCriteriaInfo = function(self, version)
-
-    --debug('requested information about criteria from server, ' .. version)
-    SendChatMessage('.achievements getCriteria ' .. version)
-    --SendChatMessage('!achievements getCriteria ' .. version, 'CHANNEL', nil, Achiever.channelIndex)
+    SendChatMessage('.achievements getCriteria ' .. tostring(version))
 end
 Achiever.apiRequestCharacterCriteria = function(self)
-    debug('requested character criteria progress from server')
+    ensureDB()
     achieverDBpc.criteria = {}
     SendChatMessage('.achievements getCharacterCriteria')
-    --SendChatMessage('!achievements getCharacterCriteria', 'CHANNEL', nil, Achiever.channelIndex)
 end
 Achiever.apiRequestCharacterAchievements = function(self)
-    debug('requested character achievements from server')
+    ensureDB()
     achieverDBpc.achievements = {}
     SendChatMessage('.achievements getCharacterAchievements')
-    --SendChatMessage('.achievements getCharacterAchievements', 'CHANNEL', nil, Achiever.channelIndex)
 end
 
 Achiever.getChannelIndex = function(self, channelName)
     local lastVal = 0
     local chanList = { GetChannelList() }
-    local result = nil
     for _, value in next, chanList do
-        if value == channelName then
-            result = lastVal
-            break
-        end
+        if value == channelName then return lastVal end
         lastVal = value
     end
-    return result
+    return nil
 end
 
 Achiever.joinChannel = function(self)
     self.channelIndex = self:getChannelIndex(self.channel)
-    if (self.channelIndex == nil) then
-        JoinChannelByName(self.channel)
-    else
-        --self:startup()
-    end
+    if self.channelIndex == nil then JoinChannelByName(self.channel) end
 end
-
-local READY_MAX = 30.0  -- ennyi mp után feloldjuk az ablakot, akkor is, ha nincs teljes adat
--- Indítás: késleltetve, bejelentkezésenként egyszer. Ezután az OnUpdate figyeli, hogy a
--- szerver-adat tényleg megérkezett-e (CAV/ACV/CRV + csend), és csak utána nyitható az ablak.
-local STARTUP_DELAY = 8.0
-local startupTimer = nil   -- nil = nincs ütemezve
-local inWorld = false
 
 local function staticComplete()
     local function ok(section)
         return type(section) == 'table' and (tonumber(section.version) or -1) >= 1
     end
+    ensureDB()
     return ok(achieverDB.categories) and ok(achieverDB.achievements) and ok(achieverDB.criteria)
 end
 
 local function onTick(self, elapsed)
     if not inWorld then return end
-    local dt = tonumber(elapsed) or tonumber(arg1) or 0
+    local dt = tonumber(elapsed) or 0
 
     if not ACHIEVER_INIT then
         startupTimer = (startupTimer or 0) + dt
@@ -368,24 +371,23 @@ local function onTick(self, elapsed)
         ACHIEVER_DATA_READY = true
         self:SetScript("OnUpdate", nil)
         if not staticComplete() then
-            DEFAULT_CHAT_FRAME:AddMessage('Achiever: no complete server data after ' .. READY_MAX .. 's, the achievement window is unlocked anyway. Check /acready.')
+            say('Achiever: no complete server data after ' .. READY_MAX .. 's, the achievement window is unlocked anyway. Check /acready.')
         end
     elseif not readyHintShown and readyWaited >= READY_HINT_AT then
         readyHintShown = true
-        DEFAULT_CHAT_FRAME:AddMessage('Achiever: still waiting for the server data (no reply to enableAchiever). The achievement window stays locked.')
+        say('Achiever: still waiting for the server data (no reply to enableAchiever). The achievement window stays locked.')
     end
 end
 
--- Az achievement-lista (ACHIEVEMENTUI_CATEGORIES) csak tab-kattintásnál épül újra.
--- Ezt a megnyitás és az achievement-szerzés után is lefuttatjuk, különben régi listát látunk.
 function Achiever_RefreshUi()
     if not AchievementFrame or not AchievementFrame:IsShown() then return end
-    AchievementFrameCategories_GetCategoryList(ACHIEVEMENTUI_CATEGORIES)
-    AchievementFrameCategories_Update()
-    AchievementFrame_ForceUpdate()
+    if type(AchievementFrameCategories_GetCategoryList) == 'function' and ACHIEVEMENTUI_CATEGORIES then
+        AchievementFrameCategories_GetCategoryList(ACHIEVEMENTUI_CATEGORIES)
+    end
+    if type(AchievementFrameCategories_Update) == 'function' then AchievementFrameCategories_Update() end
+    if type(AchievementFrame_ForceUpdate) == 'function' then AchievementFrame_ForceUpdate() end
 end
 
--- Az achievement ablak megnyitását (keybind, micro gomb) addig zárjuk, amíg az adat nincs kész.
 local function installUiGate()
     if uiGateInstalled or type(AchievementFrame_ToggleAchievementFrame) ~= 'function' then return end
     uiGateInstalled = true
@@ -393,17 +395,19 @@ local function installUiGate()
     AchievementFrame_ToggleAchievementFrame = function(...)
         if not (ACHIEVER_DATA_READY or staticComplete()) then
             local function v(sec) return type(sec) == 'table' and tostring(sec.version) or 'nil' end
-            DEFAULT_CHAT_FRAME:AddMessage('Achiever: achievement data still loading (versions cat=' .. v(achieverDB.categories)
+            say('Achiever: achievement data still loading (versions cat=' .. v(achieverDB.categories)
                 .. ' ach=' .. v(achieverDB.achievements) .. ' crit=' .. v(achieverDB.criteria) .. '). Use /acready.')
             return
         end
-        original(...)
+
+        -- A vararg csak itt, a vararg függvényen belül használható.
+        local ok, err = pcall(original, ...)
+        if not ok then warn('Achiever UI error: ' .. tostring(err)) end
+
         safeUi(Achiever_RefreshUi)
     end
 end
 
--- A szerver chat-linkje (|Hachievement:ID|h) a TBC kliensben nem ismert link-típus:
--- kattintásra az ItemRef hibát dobna. Ezt elkapjuk, és helyette az achievement-ablakot nyitjuk.
 local linkGateInstalled = false
 local function installLinkGate()
     if linkGateInstalled or type(SetItemRef) ~= 'function' then return end
@@ -411,8 +415,8 @@ local function installLinkGate()
     local original = SetItemRef
     SetItemRef = function(link, text, button, ...)
         if type(link) == 'string' and string.find(link, '^achievement:') then
-            if not (AchievementFrame and AchievementFrame:IsShown()) then
-                AchievementFrame_ToggleAchievementFrame()
+            if type(AchievementFrame_ToggleAchievementFrame) == 'function' then
+                safeUi(function() AchievementFrame_ToggleAchievementFrame() end)
             end
             return
         end
@@ -431,23 +435,13 @@ end
 Achiever.startup = function(self)
     if ACHIEVER_INIT then return end
     ACHIEVER_INIT = true
+    ensureDB()
 
-    if type(achieverDB) ~= 'table' then achieverDB = {} end
-    if type(achieverDBpc) ~= 'table' then achieverDBpc = {} end
-    if type(achieverDBpc.criteria) ~= 'table' then achieverDBpc.criteria = {} end
-    if type(achieverDBpc.achievements) ~= 'table' then achieverDBpc.achievements = {} end
-    if (not achieverDBpc.debug) then achieverDBpc.debug = "disabled" end
-    if (not achieverDBpc.buttonmain) then achieverDBpc.buttonmain = "enabled" end
-    if (not achieverDBpc.buttonsmall) then
-        achieverDBpc.buttonsmall = "disabled"
-        if Achiever_Minimap then Achiever_Minimap:Hide() end
-    end
-
-    -- A statikus cache realm + faction szerint érvényes. Bejelentkezés/reload között megmarad.
     local factionGroup = UnitFactionGroup("player")
     local realm = GetRealmName()
     if achieverDB.realm ~= realm or achieverDB.faction ~= factionGroup then
         achieverDB = {}
+        ensureDB()
     end
     achieverDB.realm = realm
     achieverDB.faction = factionGroup
@@ -467,11 +461,8 @@ Achiever.startup = function(self)
     local vr = versionOf(achieverDB.criteria)
     local sendVersion = 0
     if vc >= 1 and va >= 1 and vr >= 1 and hasRows(achieverDB.categories) and hasRows(achieverDB.achievements) then
-        -- Teljes, érvényes cache: a szerver ilyenkor nem küld újra statikus adatot.
         sendVersion = math.min(vc, va, vr)
     else
-        -- Hiányos vagy régi cache: teljes újraküldés. A régi táblák kellenek eldobni,
-        -- különben az achievement-pontok duplán számolódnának.
         achieverDB.categories = { version = -1, data = {}, byParent = {} }
         achieverDB.achievements = { version = -1, totalPoints = 0, data = {}, byCategory = {}, nextById = {}, previousById = {} }
         achieverDB.criteria = { version = -1, data = {}, byAchievement = {} }
@@ -485,42 +476,38 @@ Achiever.startup = function(self)
     self:apiEnableDataSend(sendVersion)
 end
 
-
 SLASH_ACHIEVERREADY1 = '/acready'
 SlashCmdList.ACHIEVERREADY = function()
-    local function v(sec)
-        return type(sec) == 'table' and tostring(sec.version) or 'nil'
-    end
-    DEFAULT_CHAT_FRAME:AddMessage(string.format('Achiever ready: init=%s inWorld=%s dataReady=%s waited=%.1f quiet=%.1f versions cat=%s ach=%s crit=%s',
+    ensureDB()
+    local function v(sec) return type(sec) == 'table' and tostring(sec.version) or 'nil' end
+    say(string.format('Achiever ready: init=%s inWorld=%s dataReady=%s waited=%.1f quiet=%.1f versions cat=%s ach=%s crit=%s',
         tostring(ACHIEVER_INIT), tostring(inWorld), tostring(ACHIEVER_DATA_READY), readyWaited, readyQuiet,
         v(achieverDB.categories), v(achieverDB.achievements), v(achieverDB.criteria)))
 end
+
 Achiever:SetScript("OnEvent", function(self, event, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10)
-    if (not event) then
-        warn('OnEvent with no event')
-		return
-	elseif (event == "ADDON_LOADED" and arg1 == ACHIEVER_ADDON_NAME) then
+    if not event then return end
+    if event == "ADDON_LOADED" and arg1 == ACHIEVER_ADDON_NAME then
+        ensureDB()
         debug('ADDON_LOADED')
-	elseif (event == 'CHAT_MSG_CHANNEL_LEAVE') then
-        debug('OnEvent CHAT_MSG_CHANNEL_LEAVE')
-    elseif (event == 'VARIABLES_LOADED') then
+    elseif event == 'VARIABLES_LOADED' then
+        ensureDB()
         debug('VARIABLES_LOADED')
-	elseif (event == 'PLAYER_ENTERING_WORLD') then
-		debug('PLAYER_ENTERING_WORLD')
-		inWorld = true
-		scheduleStartup()
-	elseif (event == 'PLAYER_LEAVING_WORLD') then
-		inWorld = false
-elseif (event == 'CHAT_MSG_ADDON' or event == 'CHAT_MSG_WHISPER') then
-		if (ACHIEVER_INIT and arg1) then
-			local s, e  = string.find(arg1, 'ACHI#', 1, true)
-			if (s == 1 and e == 5) then
-				debug('hidden achievement server message: ' .. arg1)
-				local ok, err = pcall(self.processServerMessage, self, arg1)
-				if not ok then warn('Achiever server message error: ' .. tostring(err)) end
-			end
-		end
-	end
+    elseif event == 'PLAYER_ENTERING_WORLD' then
+        debug('PLAYER_ENTERING_WORLD')
+        inWorld = true
+        scheduleStartup()
+    elseif event == 'PLAYER_LEAVING_WORLD' then
+        inWorld = false
+    elseif event == 'CHAT_MSG_ADDON' or event == 'CHAT_MSG_WHISPER' then
+        if ACHIEVER_INIT and type(arg1) == 'string' then
+            local s, e = string.find(arg1, 'ACHI#', 1, true)
+            if s == 1 and e == 5 then
+                local ok, err = pcall(self.processServerMessage, self, arg1)
+                if not ok then warn('Achiever server message error: ' .. tostring(err)) end
+            end
+        end
+    end
 end)
 
 NEWBIE_TOOLTIP_ACHIEVEMENT = "View information about your achievements and statistics.";
@@ -529,101 +516,97 @@ BINDING_HEADER_ACHIEVER = "Achiever";
 BINDING_NAME_TOGGLEACHIEVEMENTS = "Show Achievements";
 
 function AchievementsMicroButton_OnLoad()
-    this:RegisterForClicks("LeftButtonUp", "RightButtonUp");
-    this:RegisterEvent("PLAYER_LEVEL_UP");
-    this:RegisterEvent("UPDATE_BINDINGS");
-    this:RegisterEvent("UNIT_LEVEL");
-    this:RegisterEvent("PLAYER_ENTERING_WORLD");
-    this:SetNormalTexture("Interface\\AddOns\\Achiever\\textures\\UI-MicroButton-Achievement-Up");
-    this:SetPushedTexture("Interface\\AddOns\\Achiever\\textures\\UI-MicroButton-Achievement-Down");
-    this:SetDisabledTexture("Interface\\AddOns\\Achiever\\textures\\UI-MicroButton-Achievement-Disabled");
-    this:SetHighlightTexture("Interface\\Buttons\\UI-MicroButton-Hilight");
-    this:RegisterForClicks("LeftButtonUp", "RightButtonUp");
-    if ( GetBindingKey("TOGGLEACHIEVEMENTS") ) then
-        this.tooltipText = "Achievements".." "..NORMAL_FONT_COLOR_CODE.."("..GetBindingKey("TOGGLEACHIEVEMENTS")..")"..FONT_COLOR_CODE_CLOSE;
+    if not this then return end
+    this:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    this:RegisterEvent("PLAYER_LEVEL_UP")
+    this:RegisterEvent("UPDATE_BINDINGS")
+    this:RegisterEvent("UNIT_LEVEL")
+    this:RegisterEvent("PLAYER_ENTERING_WORLD")
+    this:SetNormalTexture("Interface\\AddOns\\Achiever\\textures\\UI-MicroButton-Achievement-Up")
+    this:SetPushedTexture("Interface\\AddOns\\Achiever\\textures\\UI-MicroButton-Achievement-Down")
+    this:SetDisabledTexture("Interface\\AddOns\\Achiever\\textures\\UI-MicroButton-Achievement-Disabled")
+    this:SetHighlightTexture("Interface\\Buttons\\UI-MicroButton-Hilight")
+    if GetBindingKey("TOGGLEACHIEVEMENTS") then
+        this.tooltipText = "Achievements" .. " " .. NORMAL_FONT_COLOR_CODE .. "(" .. GetBindingKey("TOGGLEACHIEVEMENTS") .. ")" .. FONT_COLOR_CODE_CLOSE
     else
-        this.tooltipText = "Achievements";
+        this.tooltipText = "Achievements"
     end
-    this.newbieText = NEWBIE_TOOLTIP_ACHIEVEMENT;
+    this.newbieText = NEWBIE_TOOLTIP_ACHIEVEMENT
 end
 
 function AchievementsMicroButton_OnEvent()
-    if ( event == "PLAYER_LEVEL_UP" ) then
-        UpdateAchievementsButton();
-    elseif ( event == "UNIT_LEVEL" or event == "PLAYER_ENTERING_WORLD" ) then
-        UpdateAchievementsButton();
-    elseif ( event == "UPDATE_BINDINGS" ) then
-        if ( GetBindingKey("TOGGLEACHIEVEMENTS") ) then
-            this.tooltipText = "Achievements".." "..NORMAL_FONT_COLOR_CODE.."("..GetBindingKey("TOGGLEACHIEVEMENTS")..")"..FONT_COLOR_CODE_CLOSE;
+    if not this then return end
+    if event == "PLAYER_LEVEL_UP" or event == "UNIT_LEVEL" or event == "PLAYER_ENTERING_WORLD" then
+        safeUi(UpdateAchievementsButton)
+    elseif event == "UPDATE_BINDINGS" then
+        if GetBindingKey("TOGGLEACHIEVEMENTS") then
+            this.tooltipText = "Achievements" .. " " .. NORMAL_FONT_COLOR_CODE .. "(" .. GetBindingKey("TOGGLEACHIEVEMENTS") .. ")" .. FONT_COLOR_CODE_CLOSE
         else
-            this.tooltipText = "Achievements";
+            this.tooltipText = "Achievements"
         end
     end
 end
 
 function UpdateAchievementsButton()
-    -- move nearby buttons
-    if ( UnitLevel("player") < 10 ) then
-        AchievementsMicroButton:SetPoint("BOTTOMLEFT", "TalentMicroButton", "BOTTOMLEFT", 0, 0);
-        QuestLogMicroButton:SetPoint("BOTTOMLEFT", "AchievementsMicroButton", "BOTTOMRIGHT", -2, 0);
-    else
-        AchievementsMicroButton:SetPoint("BOTTOMLEFT", "TalentMicroButton", "BOTTOMRIGHT", -2, 0);
-        --QuestLogMicroButton:SetPoint("BOTTOMLEFT", "AchievementsMicroButton", "BOTTOMRIGHT", -2, 0);
+    if not AchievementsMicroButton then return end
+    local level = UnitLevel("player") or 1
+    if TalentMicroButton and QuestLogMicroButton then
+        if level < 10 then
+            AchievementsMicroButton:SetPoint("BOTTOMLEFT", "TalentMicroButton", "BOTTOMLEFT", 0, 0)
+        else
+            AchievementsMicroButton:SetPoint("BOTTOMLEFT", "TalentMicroButton", "BOTTOMRIGHT", -2, 0)
+        end
+        QuestLogMicroButton:SetPoint("BOTTOMLEFT", "AchievementsMicroButton", "BOTTOMRIGHT", -3, 0)
     end
-    -- hide help button to free up space
-    HelpMicroButton:Hide();
-    QuestLogMicroButton:SetPoint("BOTTOMLEFT", "AchievementsMicroButton", "BOTTOMRIGHT", -3, 0);
-
-    -- Update main bar button
-    if ( AchievementFrame:IsShown() ) then
-        AchievementsMicroButton:SetButtonState("PUSHED", 1);
-        SetButtonPulse(AchievementsMicroButton, 0, 1);
+    if HelpMicroButton then HelpMicroButton:Hide() end
+    if AchievementFrame and AchievementFrame:IsShown() then
+        AchievementsMicroButton:SetButtonState("PUSHED", 1)
+        if SetButtonPulse then SetButtonPulse(AchievementsMicroButton, 0, 1) end
     else
-        AchievementsMicroButton:SetButtonState("NORMAL");
+        AchievementsMicroButton:SetButtonState("NORMAL")
     end
-
-    if achieverDBpc.buttonsmall == "disabled" then
-        Achiever_Minimap:Hide();
+    if achieverDBpc and achieverDBpc.buttonsmall == "disabled" and Achiever_Minimap then
+        Achiever_Minimap:Hide()
     end
 end
 
 local function toggleMainButton()
+    ensureDB()
+    if not AchievementsMicroButton then return end
     if achieverDBpc.buttonmain == "enabled" then
         achieverDBpc.buttonmain = "disabled"
-        AchievementsMicroButton:Hide();
-        HelpMicroButton:Show();
-        if ( UnitLevel("player") < 10 ) then
-            QuestLogMicroButton:SetPoint("BOTTOMLEFT", "TalentMicroButton", "BOTTOMLEFT", 0, 0);
-        else
-            QuestLogMicroButton:SetPoint("BOTTOMLEFT", "TalentMicroButton", "BOTTOMRIGHT", -2, 0);
+        AchievementsMicroButton:Hide()
+        if HelpMicroButton then HelpMicroButton:Show() end
+        if TalentMicroButton and QuestLogMicroButton then
+            if (UnitLevel("player") or 1) < 10 then
+                QuestLogMicroButton:SetPoint("BOTTOMLEFT", "TalentMicroButton", "BOTTOMLEFT", 0, 0)
+            else
+                QuestLogMicroButton:SetPoint("BOTTOMLEFT", "TalentMicroButton", "BOTTOMRIGHT", -2, 0)
+            end
         end
-        DEFAULT_CHAT_FRAME:AddMessage('Achiever main bar button disabled')
+        say('Achiever main bar button disabled')
     else
         achieverDBpc.buttonmain = "enabled"
-        AchievementsMicroButton:Show();
-        UpdateAchievementsButton();
-        DEFAULT_CHAT_FRAME:AddMessage('Achiever main bar button enabled')
+        AchievementsMicroButton:Show()
+        safeUi(UpdateAchievementsButton)
+        say('Achiever main bar button enabled')
     end
 end
 
 local function toggleSmallButton()
+    ensureDB()
     if achieverDBpc.buttonsmall == "enabled" then
         achieverDBpc.buttonsmall = "disabled"
-        Achiever_Minimap:Hide();
-        DEFAULT_CHAT_FRAME:AddMessage('Achiever movable button disabled')
+        if Achiever_Minimap then Achiever_Minimap:Hide() end
+        say('Achiever movable button disabled')
     else
         achieverDBpc.buttonsmall = "enabled"
-        Achiever_Minimap:Show();
-        DEFAULT_CHAT_FRAME:AddMessage('Achiever movable button enabled')
+        if Achiever_Minimap then Achiever_Minimap:Show() end
+        say('Achiever movable button enabled')
     end
 end
 
 SLASH_ACHIEVERBUTTONMAIN1 = "/acbuttonmain"
-SlashCmdList.ACHIEVERBUTTONMAIN = function()
-    toggleMainButton()
-end
-
+SlashCmdList.ACHIEVERBUTTONMAIN = toggleMainButton
 SLASH_ACHIEVERBUTTONSMALL1 = "/acbuttonsmall"
-SlashCmdList.ACHIEVERBUTTONSMALL = function()
-    toggleSmallButton()
-end
+SlashCmdList.ACHIEVERBUTTONSMALL = toggleSmallButton
